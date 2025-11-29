@@ -18,11 +18,16 @@ app.get('/ping', (req, res) => {
 app.post('/jugar', (req, res) => {
     const { palabraMaquina, palabraUsuario } = req.body || {};
 
-    // Respuesta fija de prueba
+    // Forzamos explícitamente UTF-8 en la respuesta
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+
     res.json({
         puntuacion: 8,
-        explicacion: `Respuesta de prueba. He recibido la palabra de la máquina "${palabraMaquina}" y tu palabra "${palabraUsuario}".`,
-        nueva_palabra: "bruma",
+        explicacion:
+            `Probando acentos: corazón, canción, ilusión, niño, acción, brújula.\n` +
+            `También he recibido la palabra de la máquina "${palabraMaquina}" ` +
+            `y tu palabra "${palabraUsuario}".`,
+        nueva_palabra: 'brújula',
         creditosRestantes: 42
     });
 });
