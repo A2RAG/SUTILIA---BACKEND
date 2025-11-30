@@ -60,6 +60,25 @@ function creaExplicacion(palabraMaquina, palabraUsuario, puntuacion) {
     return `Hay bastante cercanía entre "${palabraMaquina}" y "${palabraUsuario}". La unión es más evidente que sutil.`;
   }
 }
+// Lista de palabras semilla, poéticas, que Sutilia puede lanzar
+const PALABRAS_SEMILLA = [
+  'bruma',
+  'orilla',
+  'invierno',
+  'latido',
+  'deriva',
+  'umbría',
+  'faro',
+  'vacío',
+  'círculo',
+  'marea'
+];
+
+// Elegimos siempre una palabra nueva de la lista
+function siguientePalabra() {
+  const idx = Math.floor(Math.random() * PALABRAS_SEMILLA.length);
+  return PALABRAS_SEMILLA[idx];
+}
 
 // ------------- Endpoints -------------
 
@@ -73,8 +92,8 @@ app.post('/jugar', (req, res) => {
   const puntuacion = puntuaSutileza(palabraMaquina, palabraUsuario);
   const explicacion = creaExplicacion(palabraMaquina, palabraUsuario, puntuacion);
 
-  // nueva palabra: usamos la del usuario (normalizada). Si no hay, mantenemos la máquina.
-  const nueva_palabra = normaliza(palabraUsuario) || normaliza(palabraMaquina) || 'bruma';
+  // nueva palabra: Sutilia propone una palabra nueva de su universo
+  const nueva_palabra = siguientePalabra();
 
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
