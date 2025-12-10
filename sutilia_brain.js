@@ -1,92 +1,136 @@
 // sutilia_brain.js
-
 // --------------------------------------------
-// Aquí vivirá "el cerebro" de Sutilia.
-// De momento es una versión muy sencilla,
-// pero ya tiene la forma que necesitamos
-// para ir haciéndolo cada vez más profundo.
+// Primer "cerebro" sencillo de Sutilia.
+// Aquí decidimos:
+//  - si hay hilo entre las palabras
+//  - cuántos puntos damos (0–10)
+//  - cómo explicamos la conexión
+//  - qué nueva palabra propone la máquina
 // --------------------------------------------
 
-/**
- * Analiza un turno del juego y decide:
- * - la nueva palabra de la máquina
- * - la puntuación (0–10)
- * - el texto de explicación
- * - una etiqueta de rareza opcional
- *
- * IMPORTANTE:
- *  - Aquí NO hablamos con ChatGPT todavía.
- *  - De momento es una lógica sencilla para que todo funcione.
- *  - Más adelante iremos afinando la inteligencia paso a paso.
- */
-function analizarTurno({ palabraMaquina, palabraUsuario, historial }) {
-  const limpia = (texto) =>
-    (texto || "")
-      .toLowerCase()
-      .trim()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, ""); // quita tildes
+// Palabras poéticas que la máquina puede usar
+const PALABRAS_SEMILLA = [
+  'bruma',
+  'orilla',
+  'invierno',
+  'latido',
+  'deriva',
+  'umbría',
+  'faro',
+  'vacío',
+  'círculo',
+  'marea'
+];
 
-  const maquina = limpia(palabraMaquina);
-  const usuario = limpia(palabraUsuario);
-
-  // --- 1. Comprobar si hay "hilo" mínimo ---
-  // Muy simple de momento: si comparten al menos 3 letras distintas,
-  // asumimos que hay algo de conexión. Luego lo mejoraremos.
-  const letrasMaq = new Set(maquina.split(""));
-  const letrasUsu = new Set(usuario.split(""));
-
-  let comunes = 0;
-  letrasUsu.forEach((letra) => {
-    if (letrasMaq.has(letra)) comunes++;
-  });
-
-  let puntuacion;
-  let comentarioHilo;
-
-  if (comunes === 0) {
-    puntuacion = 1;
-    comentarioHilo =
-      "Aquí casi no hay hilo entre ambas palabras. Prueba a buscar una imagen o una sensación común.";
-  } else if (comunes === 1) {
-    puntuacion = 3;
-    comentarioHilo =
-      "Hay un hilo muy fino, casi invisible. Se intuye algo, pero todavía puedes hilar más delicado.";
-  } else if (comunes === 2) {
-    puntuacion = 6;
-    comentarioHilo =
-      "El hilo empieza a sentirse. No es obvio, pero tampoco muy lejano. Buen terreno para seguir jugando.";
-  } else {
-    puntuacion = 8;
-    comentarioHilo =
-      "El hilo se siente vivo. No es directo, pero la conexión puede contarse como pequeña historia.";
-  }
-
-  // --- 2. Elegir la siguiente palabra de la máquina ---
-  // De momento: repite la misma palabra.
-  // Más adelante: aquí pondremos la lógica poética / GPT.
-  const nuevaPalabra = palabraMaquina;
-
-  // --- 3. Rareza estética (solo para colorear la interfaz) ---
-  let rareza = null;
-  if (puntuacion >= 8) rareza = "evocadora";
-  else if (puntuacion >= 5) rareza = "inusual";
-  else rareza = "comun";
-
-  // --- 4. Texto de explicación final ---
-  const explicacion =
-    comentarioHilo +
-    " (Lógica interna todavía sencilla: pronto este lugar será mucho más poético y narrativo.)";
-
-  return {
-    nueva_palabra: nuevaPalabra,
-    puntuacion,
-    explicacion,
-    rareza,
-  };
+// Normaliza texto: quita mayúsculas, espacios y tildes
+function limpia(texto = '') {
+  return (texto || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, ''); // quita acentos
 }
 
-// Exportamos la función para poder usarla desde index.js
-module.exports = {
-  analizarTurno,
-};
+/**
+ * Mide un "hilo mínimo" entre dos palabras
+ * Empieza siendo muy sencillo: número de letras comunes.
+ */
+function cuentaLetrasComunes(a, b) {
+  const sa = new Set(limpia(a).split(''));
+  const sb = new Set(limpia(b).split(''));
+
+  let comunes = 0;
+  sb.forEach((ch) => {
+    if (sa.has(ch)) comunes++;
+  });
+
+  return comunes;
+}
+
+/**
+ * Elige la siguiente palabra de la máquina.
+ * Intentamos NO repetir la palabra de la máquina ni la del usuario.
+ */
+function elegirNuevaPalabra(palabraMaquina, palabraUsuario) {
+  const prohibidas = new Set([
+    limpia(palabraMaquina),
+    limpia(palabraUsuario)
+  ]);
+
+  const candidatas = PALABRAS_SEMILLA.filter(
+    (p) => !prohibidas.has(limpia(p))
+  );
+
+  const base = candidatas.length > 0 ? candidatas : PALABRAS_SEMILLA;
+  const idx = Math.floor(Math.random() * base.length);
+  return base[idx];
+}
+
+/**
+ * Cerebro principal de un turno.
+ * Recibe las palabras y el historial (de momento no usamos historial, pero ya está preparado).
+ */
+export function analizarTurno({ palabraMaquina, palabraUsuario, historial }) {
+  const a = limpia(palabraMaquina);
+  const b = limpia(palabraUsuario);
+
+  // Controles básicos
+  if (!a || !b) {
+    return {
+      puntuacion: 0,
+      explicacion:
+        'Necesito dos palabras vivas para poder escuchar el hilo entre ellas.',
+      nueva_palabra: palabraMaquina || 'amistad',
+      rareza: 'comun'
+    };
+  }
+
+  // 1) Medimos un "hilo mínimo"
+  const comunes = cuentaLetrasComunes(a, b);
+
+  let puntuacion;
+  let comentario;
+
+  if (a === b) {
+    puntuacion = 1;
+    comentario = `Has elegido exactamente "${palabraUsuario}". Es una unión directa, sin sutileza.`;
+  } else if (comunes === 0) {
+    puntuacion = 2;
+    comentario =
+      'Aquí casi no hay hilo. Puedes probar con una imagen, recuerdo o sensación que toque a ambas palabras.';
+  } else if (comunes === 1) {
+    puntuacion = 4;
+    comentario =
+      'Hay un hilo mínimo, casi invisible. Se intuye algo, pero todavía puedes hilar más fino.';
+  } else if (comunes === 2) {
+    puntuacion = 7;
+    comentario =
+      'La conexión comienza a sentirse: no es obvia, pero podría contarse como un pequeño relato.';
+  } else {
+    puntuacion = 9;
+    comentario =
+      'El hilo entre ambas palabras vibra con fuerza silenciosa. No es literal, pero tiene sentido interno.';
+  }
+
+  // 2) Rareza estética (solo para colorear la interfaz)
+  let rareza;
+  if (puntuacion >= 8) rareza = 'evocadora';
+  else if (puntuacion >= 5) rareza = 'inusual';
+  else rareza = 'comun';
+
+  // 3) Nueva palabra de la máquina
+  const nueva_palabra = elegirNuevaPalabra(palabraMaquina, palabraUsuario);
+
+  // 4) Explicación final breve
+  const explicacion =
+    comentario +
+    ' (Esta lógica aún es sencilla; poco a poco la haremos más poética y narrativa.)';
+
+  return {
+    puntuacion,
+    explicacion,
+    nueva_palabra,
+    rareza
+  };
+}
