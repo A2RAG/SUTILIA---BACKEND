@@ -1,4 +1,5 @@
 // sutilia_brain.js
+
 // --------------------------------------------
 // Aquí vivirá "el cerebro" de Sutilia.
 // De momento es una versión muy sencilla,
