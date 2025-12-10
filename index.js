@@ -1,84 +1,13 @@
 import express from 'express';
 import cors from 'cors';
 
+// 👇 importamos el "cerebro" de Sutilia
+import { analizarTurno } from './sutilia_brain.js';
+
 const app = express();
 
 app.use(express.json());
 app.use(cors());
-
-// --- Utilidades de texto ---
-
-function normaliza(palabra = '') {
-  return (palabra || '').toString().trim().toLowerCase();
-}
-
-// calculamos parecido de letras (muy simple)
-function similitudLetras(a, b) {
-  const sa = new Set(a.split(''));
-  const sb = new Set(b.split(''));
-  const inter = [...sa].filter(ch => sb.has(ch)).length;
-  const union = new Set([...sa, ...sb]).size || 1;
-  return inter / union; // 0 = nada en común, 1 = iguales
-}
-
-// puntuación 0–10: cuanto más diferentes, más sutil
-function puntuaSutileza(palabraMaquina, palabraUsuario) {
-  const a = normaliza(palabraMaquina);
-  const b = normaliza(palabraUsuario);
-
-  if (!a || !b) return 0;
-
-  if (a === b) return 1; // misma palabra, nada sutil
-
-  const sim = similitudLetras(a, b);
-
-  let score = Math.round((1 - sim) * 10);
-
-  if (score < 0) score = 0;
-  if (score > 10) score = 10;
-
-  return score;
-}
-
-function creaExplicacion(palabraMaquina, palabraUsuario, puntuacion) {
-  const a = normaliza(palabraMaquina);
-  const b = normaliza(palabraUsuario);
-
-  if (!a || !b) {
-    return 'Necesito dos palabras para poder escuchar la sutileza entre ellas.';
-  }
-
-  if (a === b) {
-    return `Has elegido exactamente la misma palabra: "${palabraUsuario}". Es una conexión directa, sin sutileza.`;
-  }
-
-  if (puntuacion >= 8) {
-    return `Entre "${palabraMaquina}" y "${palabraUsuario}" casi no hay vínculo evidente. La relación es delicada, inesperada, muy sutil.`;
-  } else if (puntuacion >= 5) {
-    return `La conexión entre "${palabraMaquina}" y "${palabraUsuario}" no es obvia, pero todavía se intuyen ecos en común. Una sutileza a medio camino.`;
-  } else {
-    return `Hay bastante cercanía entre "${palabraMaquina}" y "${palabraUsuario}". La unión es más evidente que sutil.`;
-  }
-}
-// Lista de palabras semilla, poéticas, que Sutilia puede lanzar
-const PALABRAS_SEMILLA = [
-  'bruma',
-  'orilla',
-  'invierno',
-  'latido',
-  'deriva',
-  'umbría',
-  'faro',
-  'vacío',
-  'círculo',
-  'marea'
-];
-
-// Elegimos siempre una palabra nueva de la lista
-function siguientePalabra() {
-  const idx = Math.floor(Math.random() * PALABRAS_SEMILLA.length);
-  return PALABRAS_SEMILLA[idx];
-}
 
 // ------------- Endpoints -------------
 
@@ -87,13 +16,16 @@ app.get('/ping', (req, res) => {
 });
 
 app.post('/jugar', (req, res) => {
-  const { palabraMaquina, palabraUsuario } = req.body || {};
+  const { palabraMaquina, palabraUsuario, historial } = req.body || {};
 
-  const puntuacion = puntuaSutileza(palabraMaquina, palabraUsuario);
-  const explicacion = creaExplicacion(palabraMaquina, palabraUsuario, puntuacion);
+  // Delegamos toda la lógica al cerebro
+  const resultado = analizarTurno({
+    palabraMaquina,
+    palabraUsuario,
+    historial: historial || []
+  });
 
-  // nueva palabra: Sutilia propone una palabra nueva de su universo
-  const nueva_palabra = siguientePalabra();
+  const { puntuacion, explicacion, nueva_palabra, rareza } = resultado;
 
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
@@ -101,7 +33,8 @@ app.post('/jugar', (req, res) => {
     puntuacion,
     explicacion,
     nueva_palabra,
-    creditosRestantes: 42
+    rareza,
+    creditosRestantes: 42 // de momento lo dejamos fijo
   });
 });
 
