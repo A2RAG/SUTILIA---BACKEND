@@ -57,39 +57,52 @@ Tu tarea:
 {
   "hay_hilo": true | false,
   "explicacion": "texto corto",
-  "nueva_palabra": "una sola palabra en minúsculas, sin tildes"
+  "nueva_palabra": "una sola palabra en minusculas, sin tildes"
 }
 
 No añadas nada fuera del JSON.
 `;
 
-  const userContent = {
-    role: "user",
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({
-          palabraMaquina,
-          palabraUsuario,
-          historial,
-        }),
-      },
-    ],
-  };
+  // Construimos la conversación en el formato que la API nueva quiere
+  const input = [
+    {
+      role: "system",
+      content: [
+        {
+          type: "input_text",
+          text: systemPrompt,
+        },
+      ],
+    },
+    {
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text: JSON.stringify({
+            palabraMaquina,
+            palabraUsuario,
+            historial,
+          }),
+        },
+      ],
+    },
+  ];
 
   const response = await openai.responses.create({
-    model: "gpt-5.1-mini",
-    input: [systemPrompt, userContent],
+    model: "gpt-5.1",
+    input,
     max_output_tokens: 300,
   });
 
+  // Sacamos el texto que devuelve el modelo
   const raw = response.output[0].content[0].text;
-  let json;
 
+  let json;
   try {
     json = JSON.parse(raw);
   } catch (e) {
-    // Si algo va mal, devolvemos algo neutro
+    // Si algo va mal, devolvemos algo neutro y seguro
     json = {
       hay_hilo: false,
       explicacion:
@@ -100,6 +113,7 @@ No añadas nada fuera del JSON.
 
   return json;
 }
+
 
 // -------------------- ENDPOINTS --------------------
 
