@@ -1,3 +1,5 @@
+console.log('Sutilia backend v2 – lógica de sutileza simple');
+
 import express from 'express';
 import cors from 'cors';
 
