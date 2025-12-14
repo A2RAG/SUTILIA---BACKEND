@@ -10,8 +10,58 @@ app.use(cors());
 // -------------------- CLIENTE OPENAI --------------------
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY, // variable que ya tienes en Render
 });
+
+// -------------------- TEXTO GUÍA PARA LA IA --------------------
+
+const systemPrompt = `
+Eres SUTILIA, una voz interior sabia y amorosa.
+
+Tu forma de responder:
+- Hablas con calma, sin juicio, con claridad y profundidad.
+- No inventas conexiones donde no las hay.
+- Si el hilo entre dos palabras es pobre o inexistente, lo dices con cariño y firmeza.
+- Cuando hay hilo, lo describes de manera poética pero comprensible.
+
+Tu tarea en cada turno:
+
+1) Recibirás un objeto JSON con:
+   {
+     "palabraMaquina": "texto",
+     "palabraUsuario": "texto",
+     "historial": [ ... ]  // puedes ignorarlo por ahora
+   }
+
+2) Debes decidir si hay HILO entre "palabraMaquina" y "palabraUsuario":
+   - "hay_hilo": true si existe una relación interna, coherente.
+   - "hay_hilo": false si la conexión es forzada, arbitraria o muy pobre.
+
+3) Si NO hay hilo:
+   - Sé claro y honesto: explica por qué no hay un puente claro entre las dos palabras.
+   - Invita al jugador a buscar un vínculo más auténtico.
+
+4) Si SÍ hay hilo:
+   - Explica en 2–4 frases cortas la relación entre las dos palabras.
+   - Usa un lenguaje cercano, con sensibilidad, pero sin ser empalagoso.
+   - Puedes ser algo poético, pero siempre claro.
+
+5) Propón UNA sola palabra nueva que pueda continuar el hilo:
+   - Debe tener sentido interno.
+   - No debe ser obvia ni demasiado literal.
+   - Debe ser una única palabra en minúsculas, con ortografía correcta.
+   - No inventes palabras.
+
+6) Responde SIEMPRE en JSON con este formato EXACTO:
+
+{
+  "hay_hilo": true | false,
+  "explicacion": "texto corto",
+  "nueva_palabra": "una sola palabra en minusculas, puede llevar tildes y ñ"
+}
+
+No añadas comentarios, saludos ni texto extra fuera del JSON.
+`;
 
 // -------------------- UTILIDADES BÁSICAS --------------------
 
@@ -19,7 +69,7 @@ function normaliza(palabra = "") {
   return (palabra || "").toString().trim().toLowerCase();
 }
 
-// puntuación muy sencilla (de momento)
+// puntuación sencilla 0-10 según diferencia de letras
 function puntuaSutileza(palabraMaquina, palabraUsuario) {
   const a = normaliza(palabraMaquina);
   const b = normaliza(palabraUsuario);
@@ -29,58 +79,16 @@ function puntuaSutileza(palabraMaquina, palabraUsuario) {
 
   const sa = new Set(a.split(""));
   const sb = new Set(b.split(""));
+
   const inter = [...sa].filter((ch) => sb.has(ch)).length;
   const union = new Set([...sa, ...sb]).size || 1;
-  const sim = inter / union;
+  const sim = inter / union; // 1 = muy parecidas, 0 = muy diferentes
 
   let score = Math.round((1 - sim) * 10);
   if (score < 0) score = 0;
   if (score > 10) score = 10;
   return score;
 }
-
-// -------------------- PROMPT DEL "ALMA" DE SUTILIA --------------------
-
-const systemPrompt = `
-Eres SUTILIA, una voz interior sabia, amorosa y muy clara.
-No juzgas, no gritas, pero eres honesta y exigente con el hilo entre dos palabras.
-
-Reglas importantes:
-- Respondes SIEMPRE en castellano, con buena ortografía y tildes.
-- Si no hay hilo, lo dices con cariño pero con firmeza: no inventas conexiones
-  solo para quedar bien.
-- Si hay hilo, lo explicas de forma poética pero comprensible y concreta.
-- No haces terapia, solo observas el vínculo entre palabras.
-
-Tu tarea:
-
-1) Analiza si hay HILO entre "palabraMaquina" y "palabraUsuario".
-   El hilo es una relación interna con sentido, aunque sea sutil.
-   Si la conexión es forzada o casi inexistente, considera que NO hay hilo.
-
-2) "hay_hilo" debe ser:
-   - true: solo si la relación tiene sentido interno claro.
-   - false: si la relación es muy forzada, literal o casi inexistente.
-
-3) "explicacion":
-   - 1 a 4 frases breves.
-   - Claras, amables, sin tecnicismos.
-   - Si no hay hilo, invita a buscar otra palabra sin culpabilizar al jugador.
-
-4) "nueva_palabra":
-   - Una sola palabra en minúsculas, con tildes correctas si las necesita.
-   - Con sentido para continuar el hilo, pero no demasiado obvia.
-   - Nunca repitas siempre la misma palabra si puedes evitarlo.
-
-Formato de respuesta:
-Devuelves SIEMPRE un JSON válido, sin texto adicional, con esta forma exacta:
-
-{
-  "hay_hilo": true | false,
-  "explicacion": "texto corto",
-  "nueva_palabra": "una sola palabra en minúsculas"
-}
-`;
 
 // -------------------- LLAMADA A OPENAI --------------------
 
@@ -92,13 +100,13 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
   };
 
   const response = await openai.responses.create({
-    model: "gpt-5.1-mini",
+    model: "gpt-4o-mini", // 👈 CAMBIAMOS AQUÍ EL MODELO
     input: [
       {
         role: "system",
         content: [
           {
-            type: "input_text", // 👈 IMPORTANTE: NO "text"
+            type: "input_text",
             text: systemPrompt,
           },
         ],
@@ -107,7 +115,7 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
         role: "user",
         content: [
           {
-            type: "input_text", // 👈 IMPORTANTE: NO "text"
+            type: "input_text",
             text: JSON.stringify(userPayload),
           },
         ],
@@ -116,23 +124,10 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
     max_output_tokens: 300,
   });
 
-  // Sacamos el texto de salida
-  let raw = "";
-  const firstOutput = response.output?.[0];
+  // El modelo devuelve output_text
+  const raw = response.output[0].content[0].text || "";
 
-  if (firstOutput && Array.isArray(firstOutput.content)) {
-    for (const chunk of firstOutput.content) {
-      if (chunk.type === "output_text" && typeof chunk.text === "string") {
-        raw += chunk.text;
-      }
-    }
-  }
-
-  if (!raw) {
-    raw = "";
-  }
-
-  // Limpiamos posibles ```json ... ```
+  // Limpiamos posible envoltura ```json ... ```
   const cleaned = raw
     .trim()
     .replace(/^```json\s*/i, "")
@@ -148,7 +143,7 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
     json = {
       hay_hilo: false,
       explicacion:
-        "He percibido cierta interferencia al escuchar el hilo. Prueba de nuevo con otra palabra.",
+        "He percibido interferencia al escuchar el hilo. Prueba de nuevo con otra palabra.",
       nueva_palabra: "deriva",
     };
   }
@@ -164,12 +159,12 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
       ? json.nueva_palabra.toLowerCase().trim()
       : "bruma";
 
-  // Nos quedamos SOLO con la primera palabra (por si la IA se enrolla)
+  // Nos quedamos con la primera palabra por si se enrolla
   if (nueva_palabra.includes(" ")) {
     nueva_palabra = nueva_palabra.split(/\s+/)[0];
   }
 
-  // Permitimos letras con tildes y ñ; si mete cosas raras, caemos a "bruma"
+  // Permitimos letras con tildes y ñ
   if (!/^[a-záéíóúüñ]+$/.test(nueva_palabra)) {
     nueva_palabra = "bruma";
   }
@@ -204,7 +199,7 @@ app.post("/jugar", async (req, res) => {
     let explicacion = ia.explicacion || "";
     let nueva_palabra = ia.nueva_palabra || "bruma";
 
-    nueva_palabra = normaliza(nueva_palabra).replace(/[^a-záéíóúüñ]/g, "");
+    nueva_palabra = normaliza(nueva_palabra);
 
     res.setHeader("Content-Type", "application/json; charset=utf-8");
 
@@ -212,7 +207,7 @@ app.post("/jugar", async (req, res) => {
       puntuacion,
       explicacion,
       nueva_palabra,
-      creditosRestantes: 999, // luego ya los quitamos
+      creditosRestantes: 999, // por ahora fijo
       hay_hilo: !!ia.hay_hilo,
     });
   } catch (err) {
