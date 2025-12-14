@@ -102,79 +102,83 @@ NORMAS FUNDAMENTALES:
 // -------------------- LLAMADA A OPENAI --------------------
 
 async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = []) {
-  const userPayload = {
-    palabraMaquina,
-    palabraUsuario,
-    historial,
+  const systemPrompt = `
+Eres SUTILIA, una voz interior sabia y amorosa.
+Escuchas el hilo invisible entre dos palabras y ayudas a la persona a verlo con claridad.
+
+Tu tarea:
+
+1) Analiza si hay HILO entre "palabraMaquina" y "palabraUsuario".
+2) Si NO hay hilo, dilo con cariño pero con firmeza, por ejemplo:
+   "Aquí casi no hay hilo, son dos piezas que aún no encuentran un puente."
+   o
+   "No veo relación honesta entre estas dos palabras. Puedes probar otro camino."
+3) Si SÍ hay hilo, descríbelo en 2–4 frases breves, poéticas pero claras.
+4) Propón UNA sola palabra nueva que pueda continuar el hilo, no obvia,
+   con sentido interno, como un pequeño salto narrativo.
+5) Usa siempre castellano correcto: ortografía, acentos y gramática impecables.
+6) Responde SIEMPRE en JSON con este formato EXACTO:
+
+{
+  "hay_hilo": true | false,
+  "explicacion": "texto corto",
+  "nueva_palabra": "una sola palabra en minúsculas, sin tildes"
+}
+
+No añadas nada fuera del JSON.
+`;
+
+  // Mensaje de sistema (reglas del juego)
+  const systemMessage = {
+    role: "system",
+    content: [
+      {
+        type: "text",
+        text: systemPrompt
+      }
+    ]
+  };
+
+  // Mensaje de usuario (datos concretos de esta jugada)
+  const userMessage = {
+    role: "user",
+    content: [
+      {
+        type: "input_text",
+        text: JSON.stringify({
+          palabraMaquina,
+          palabraUsuario,
+          historial
+        })
+      }
+    ]
   };
 
   const response = await openai.responses.create({
     model: "gpt-5.1-mini",
-    input: [
-      {
-        role: "system",
-        content: systemPrompt,
-      },
-      {
-        role: "user",
-        content: JSON.stringify(userPayload),
-      },
-    ],
-    max_output_tokens: 300,
+    input: [systemMessage, userMessage],
+    max_output_tokens: 300
   });
 
-  // Extraemos el texto bruto
-  const raw = response.output[0].content[0].text || "";
-
-  // Limpiamos posibles ```json ... ```
-  const cleaned = raw
-    .trim()
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```$/i, "")
-    .trim();
+  const raw = response.output[0].content[0].text;
+  console.log("Respuesta cruda de Sutilia:", raw);
 
   let json;
   try {
-    json = JSON.parse(cleaned);
+    json = JSON.parse(raw);
   } catch (e) {
-    console.error("Error al parsear JSON de la IA. Texto recibido:", raw);
+    console.error("Error parseando JSON de Sutilia:", e);
     json = {
       hay_hilo: false,
       explicacion:
         "He percibido cierta interferencia al escuchar el hilo. Prueba de nuevo con otra palabra.",
-      nueva_palabra: "deriva",
+      nueva_palabra: "deriva"
     };
   }
 
-  // Aseguramos tipos y campos
-  const hay_hilo = !!json.hay_hilo;
-  let explicacion = typeof json.explicacion === "string"
-    ? json.explicacion.trim()
-    : "";
-
-  let nueva_palabra = typeof json.nueva_palabra === "string"
-    ? json.nueva_palabra.toLowerCase().trim()
-    : "bruma";
-
-  // Nos quedamos SOLO con la primera palabra (por si la IA se pasa de lista)
-  if (nueva_palabra.includes(" ")) {
-    nueva_palabra = nueva_palabra.split(/\s+/)[0];
-  }
-
-  // Permitimos letras con tildes y ñ; si mete cosas raras, caemos a "bruma"
-  if (!/^[a-záéíóúüñ]+$/.test(nueva_palabra)) {
-    nueva_palabra = "bruma";
-  }
-
-  if (!explicacion) {
-    explicacion = hay_hilo
-      ? "Hay un hilo entre ambas palabras, aunque sea fino."
-      : "Aquí no encuentro un puente claro entre las dos palabras.";
-  }
-
-  return { hay_hilo, explicacion, nueva_palabra };
+  return json;
 }
+
 
 // -------------------- ENDPOINTS --------------------
 
