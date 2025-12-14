@@ -10,7 +10,7 @@ app.use(cors());
 // -------------------- CLIENTE OPENAI --------------------
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY, // usamos tu clave guardada en Render
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 // -------------------- UTILIDADES BÁSICAS --------------------
@@ -19,7 +19,7 @@ function normaliza(palabra = "") {
   return (palabra || "").toString().trim().toLowerCase();
 }
 
-// puntuación muy sencilla (de momento): 0–10
+// puntuación muy sencilla (de momento)
 function puntuaSutileza(palabraMaquina, palabraUsuario) {
   const a = normaliza(palabraMaquina);
   const b = normaliza(palabraUsuario);
@@ -39,146 +39,149 @@ function puntuaSutileza(palabraMaquina, palabraUsuario) {
   return score;
 }
 
-// -------------------- SYSTEM PROMPT DE SUTILIA --------------------
+// -------------------- PROMPT DEL "ALMA" DE SUTILIA --------------------
 
 const systemPrompt = `
-Eres SUTILIA, una voz interior sabia, amorosa y firme.
-Observas el hilo invisible entre dos palabras con atención profunda.
-Tu misión es ayudar a la persona a escuchar su intuición, no a complacerla.
+Eres SUTILIA, una voz interior sabia, amorosa y muy clara.
+No juzgas, no gritas, pero eres honesta y exigente con el hilo entre dos palabras.
 
-NORMAS FUNDAMENTALES:
+Reglas importantes:
+- Respondes SIEMPRE en castellano, con buena ortografía y tildes.
+- Si no hay hilo, lo dices con cariño pero con firmeza: no inventas conexiones
+  solo para quedar bien.
+- Si hay hilo, lo explicas de forma poética pero comprensible y concreta.
+- No haces terapia, solo observas el vínculo entre palabras.
 
-1. Evaluación del hilo
-   - Determina con precisión si existe un HILO entre "palabraMaquina" y "palabraUsuario".
-   - El hilo puede ser conceptual, emocional o simbólico.
-   - Debe ser coherente; nunca inventes conexiones forzadas.
-   - No consideres que hay hilo cuando la relación es solo:
-       * de la misma categoría obvia (por ejemplo: "círculo" y "cuadrado"),
-       * simple oposición evidente ("frío" y "caliente"),
-       * vínculo muy superficial sin recorrido interno.
-   - Si no hay hilo, dilo con amabilidad pero con firmeza.
+Tu tarea:
 
-2. Tu personalidad
-   - Hablas con claridad impecable y ortografía perfecta (incluidas tildes).
-   - Tono: maestro interior sereno, profundo, compasivo y honesto.
-   - No juzgas, pero dices la verdad.
-   - Guías con suavidad pero con dirección clara.
-   - Puedes ser poético, pero siempre comprensible.
+1) Analiza si hay HILO entre "palabraMaquina" y "palabraUsuario".
+   El hilo es una relación interna con sentido, aunque sea sutil.
+   Si la conexión es forzada o casi inexistente, considera que NO hay hilo.
 
-3. Cuando SÍ hay hilo
-   - Explica la conexión en 2–4 frases breves.
-   - Usa imágenes poéticas sencillas.
-   - Haz que la persona sienta dónde está la conexión.
-   - No exageres ni adornes innecesariamente.
+2) "hay_hilo" debe ser:
+   - true: solo si la relación tiene sentido interno claro.
+   - false: si la relación es muy forzada, literal o casi inexistente.
 
-4. Cuando NO hay hilo
-   - Sé directo, firme y amable.
-   - Ejemplos de tono:
-       "Aquí no encuentro un puente claro entre ambas."
-       "Son dos direcciones distintas; prueba a escuchar algo más profundo."
-       "No veo un hilo, pero estás cerca: afina un poco más tu intuición."
-   - No inventes metáforas si no hay sentido real.
-   - La sinceridad es parte esencial de tu misión.
+3) "explicacion":
+   - 1 a 4 frases breves.
+   - Claras, amables, sin tecnicismos.
+   - Si no hay hilo, invita a buscar otra palabra sin culpabilizar al jugador.
 
-5. Nueva palabra
-   - Propón UNA sola palabra en minúsculas, gramaticalmente correcta.
-   - Con tildes si las lleva.
-   - No obvia, no repetida recientemente en el propio turno, y coherente con el hilo si existe.
-   - Si no hay hilo, elige una palabra equilibrada que permita reiniciar suavemente.
+4) "nueva_palabra":
+   - Una sola palabra en minúsculas, con tildes correctas si las necesita.
+   - Con sentido para continuar el hilo, pero no demasiado obvia.
+   - Nunca repitas siempre la misma palabra si puedes evitarlo.
 
-6. Formato JSON obligatorio
-   Responde SIEMPRE con:
+Formato de respuesta:
+Devuelves SIEMPRE un JSON válido, sin texto adicional, con esta forma exacta:
 
-   {
-     "hay_hilo": true | false,
-     "explicacion": "texto breve y claro",
-     "nueva_palabra": "una palabra en minúsculas, con tildes si corresponde"
-   }
-
-   No añadas nada fuera del JSON.
-   No incluyas análisis técnicos, disculpas, advertencias ni texto adicional.
+{
+  "hay_hilo": true | false,
+  "explicacion": "texto corto",
+  "nueva_palabra": "una sola palabra en minúsculas"
+}
 `;
 
 // -------------------- LLAMADA A OPENAI --------------------
 
 async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = []) {
-  const systemPrompt = `
-Eres SUTILIA, una voz interior sabia y amorosa.
-Escuchas el hilo invisible entre dos palabras y ayudas a la persona a verlo con claridad.
-
-Tu tarea:
-
-1) Analiza si hay HILO entre "palabraMaquina" y "palabraUsuario".
-2) Si NO hay hilo, dilo con cariño pero con firmeza, por ejemplo:
-   "Aquí casi no hay hilo, son dos piezas que aún no encuentran un puente."
-   o
-   "No veo relación honesta entre estas dos palabras. Puedes probar otro camino."
-3) Si SÍ hay hilo, descríbelo en 2–4 frases breves, poéticas pero claras.
-4) Propón UNA sola palabra nueva que pueda continuar el hilo, no obvia,
-   con sentido interno, como un pequeño salto narrativo.
-5) Usa siempre castellano correcto: ortografía, acentos y gramática impecables.
-6) Responde SIEMPRE en JSON con este formato EXACTO:
-
-{
-  "hay_hilo": true | false,
-  "explicacion": "texto corto",
-  "nueva_palabra": "una sola palabra en minúsculas, sin tildes"
-}
-
-No añadas nada fuera del JSON.
-`;
-
-  // Mensaje de sistema (reglas del juego)
-  const systemMessage = {
-    role: "system",
-    content: [
-      {
-        type: "text",
-        text: systemPrompt
-      }
-    ]
-  };
-
-  // Mensaje de usuario (datos concretos de esta jugada)
-  const userMessage = {
-    role: "user",
-    content: [
-      {
-        type: "input_text",
-        text: JSON.stringify({
-          palabraMaquina,
-          palabraUsuario,
-          historial
-        })
-      }
-    ]
+  const userPayload = {
+    palabraMaquina,
+    palabraUsuario,
+    historial,
   };
 
   const response = await openai.responses.create({
     model: "gpt-5.1-mini",
-    input: [systemMessage, userMessage],
-    max_output_tokens: 300
+    input: [
+      {
+        role: "system",
+        content: [
+          {
+            type: "input_text", // 👈 IMPORTANTE: NO "text"
+            text: systemPrompt,
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text", // 👈 IMPORTANTE: NO "text"
+            text: JSON.stringify(userPayload),
+          },
+        ],
+      },
+    ],
+    max_output_tokens: 300,
   });
 
-  const raw = response.output[0].content[0].text;
-  console.log("Respuesta cruda de Sutilia:", raw);
+  // Sacamos el texto de salida
+  let raw = "";
+  const firstOutput = response.output?.[0];
+
+  if (firstOutput && Array.isArray(firstOutput.content)) {
+    for (const chunk of firstOutput.content) {
+      if (chunk.type === "output_text" && typeof chunk.text === "string") {
+        raw += chunk.text;
+      }
+    }
+  }
+
+  if (!raw) {
+    raw = "";
+  }
+
+  // Limpiamos posibles ```json ... ```
+  const cleaned = raw
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
 
   let json;
   try {
-    json = JSON.parse(raw);
+    json = JSON.parse(cleaned);
   } catch (e) {
-    console.error("Error parseando JSON de Sutilia:", e);
+    console.error("Error al parsear JSON de la IA. Texto recibido:", raw);
     json = {
       hay_hilo: false,
       explicacion:
         "He percibido cierta interferencia al escuchar el hilo. Prueba de nuevo con otra palabra.",
-      nueva_palabra: "deriva"
+      nueva_palabra: "deriva",
     };
   }
 
-  return json;
-}
+  // Aseguramos tipos y campos
+  const hay_hilo = !!json.hay_hilo;
 
+  let explicacion =
+    typeof json.explicacion === "string" ? json.explicacion.trim() : "";
+
+  let nueva_palabra =
+    typeof json.nueva_palabra === "string"
+      ? json.nueva_palabra.toLowerCase().trim()
+      : "bruma";
+
+  // Nos quedamos SOLO con la primera palabra (por si la IA se enrolla)
+  if (nueva_palabra.includes(" ")) {
+    nueva_palabra = nueva_palabra.split(/\s+/)[0];
+  }
+
+  // Permitimos letras con tildes y ñ; si mete cosas raras, caemos a "bruma"
+  if (!/^[a-záéíóúüñ]+$/.test(nueva_palabra)) {
+    nueva_palabra = "bruma";
+  }
+
+  if (!explicacion) {
+    explicacion = hay_hilo
+      ? "Hay un hilo entre ambas palabras, aunque sea fino."
+      : "Aquí no encuentro un puente claro entre las dos palabras.";
+  }
+
+  return { hay_hilo, explicacion, nueva_palabra };
+}
 
 // -------------------- ENDPOINTS --------------------
 
@@ -192,14 +195,16 @@ app.post("/jugar", async (req, res) => {
 
     const puntuacion = puntuaSutileza(palabraMaquina, palabraUsuario);
 
-    // Llamamos a la IA (voz sabia)
     const ia = await generaRespuestaIA(
       palabraMaquina,
       palabraUsuario,
       historial
     );
 
-    const { hay_hilo, explicacion, nueva_palabra } = ia;
+    let explicacion = ia.explicacion || "";
+    let nueva_palabra = ia.nueva_palabra || "bruma";
+
+    nueva_palabra = normaliza(nueva_palabra).replace(/[^a-záéíóúüñ]/g, "");
 
     res.setHeader("Content-Type", "application/json; charset=utf-8");
 
@@ -207,8 +212,8 @@ app.post("/jugar", async (req, res) => {
       puntuacion,
       explicacion,
       nueva_palabra,
-      hay_hilo, // true / false, por si luego lo queremos usar en la app
-      // creditosRestantes se elimina por ahora
+      creditosRestantes: 999, // luego ya los quitamos
+      hay_hilo: !!ia.hay_hilo,
     });
   } catch (err) {
     console.error("Error en /jugar:", err);
@@ -217,6 +222,7 @@ app.post("/jugar", async (req, res) => {
       explicacion:
         "Algo se ha enredado en la conexión interna. Prueba de nuevo en unos segundos.",
       nueva_palabra: "deriva",
+      creditosRestantes: 999,
       hay_hilo: false,
     });
   }
