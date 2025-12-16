@@ -156,6 +156,7 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
     historial,
   };
 
+  const nueva_palabra = limpiaPalabraIA(propuesta);
   const response = await openai.responses.create({
     model: MODEL,
     input: [
@@ -263,6 +264,20 @@ app.post("/jugar", async (req, res) => {
     });
   }
 });
+function limpiaPalabraIA(str = "") {
+  // 1) Normaliza a minúsculas y una sola palabra
+  let w = (str || "").toString().trim().toLowerCase().split(/\s+/)[0] || "";
+
+  // 2) Quita diacríticos “raros” (ö -> o, ä -> a, etc.)
+  w = w.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // 3) Permite solo letras españolas básicas (a-z y ñ)
+  // (si quieres permitir también áéíóúü, lo hacemos después con un paso extra)
+  w = w.replace(/[^a-zñ]/g, "");
+
+  return w || "bruma";
+}
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Servidor Sutilia escuchando en el puerto ${PORT}`));
