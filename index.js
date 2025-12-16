@@ -3,131 +3,100 @@ import cors from "cors";
 import OpenAI from "openai";
 
 const app = express();
-
 app.use(express.json());
 app.use(cors());
 
-// -------------------- CLIENTE OPENAI --------------------
-
+// -------------------- OPENAI --------------------
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY, // variable que ya tienes en Render
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
-// -------------------- TEXTO GUÍA PARA LA IA --------------------
+// Pon en Render (Environment):
+// OPENAI_MODEL = (el modelo que tengas disponible)
+// Si no pones nada, usa este por defecto:
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
+// -------------------- UTILIDADES --------------------
+function normaliza(p = "") {
+  return (p || "").toString().trim();
+}
+
+// Para el juego: aceptamos tildes/ñ y espacios SOLO para limpiar extremos.
+// (La IA debe devolver una sola palabra. Aquí solo defendemos el backend.)
+function limpiaPalabraIA(w) {
+  let s = normaliza(w).toLowerCase();
+
+  // si la IA devuelve varias, nos quedamos con la primera
+  if (s.includes(" ")) s = s.split(/\s+/)[0];
+
+  // solo letras españolas comunes
+  // (permitimos tildes y ñ; si mete símbolos raros, devolvemos null)
+  if (!/^[a-záéíóúüñ]+$/i.test(s)) return null;
+
+  return s;
+}
+
+function clampInt(n, min, max) {
+  const x = Number.isFinite(n) ? Math.trunc(n) : 0;
+  return Math.max(min, Math.min(max, x));
+}
+
+// -------------------- PROMPT --------------------
 const systemPrompt = `
-Eres SUTILIA, una voz interior sabia y amorosa.
+Eres SUTILIA: una voz interior sabia, amable y firme. No juzgas ni gritas.
+Tu misión es proteger la VERDAD del hilo: NO inventas conexiones por complacer.
 
-Tu forma de responder:
-- Hablas con calma, sin juicio, con claridad y profundidad.
-- No inventas conexiones donde no las hay.
-- Si el hilo entre dos palabras es pobre o inexistente, lo dices con cariño y firmeza.
-- Cuando hay hilo, lo describes de manera poética pero comprensible.
+Recibes:
+- palabraMaquina
+- palabraUsuario
+- historial (lista de turnos anteriores)
 
-Tu tarea en cada turno:
-
-1) Recibirás un objeto JSON con:
-   {
-     "palabraMaquina": "texto",
-     "palabraUsuario": "texto",
-     "historial": [ ... ]  // puedes ignorarlo por ahora
-   }
-
-2) Debes decidir si hay HILO entre "palabraMaquina" y "palabraUsuario":
-   - "hay_hilo": true si existe una relación interna, coherente.
-   - "hay_hilo": false si la conexión es forzada, arbitraria o muy pobre.
-
+Reglas CLAVE:
+1) Decide si hay HILO real entre palabraMaquina y palabraUsuario.
+   - Si NO hay hilo, dilo claro y con cariño. No fuerces metáforas.
+2) Dificultad ALTA:
+   - 10/10 es MUY raro. Solo si el salto es cuántico pero coherente.
+   - 7–9 solo si el vínculo es sutil pero defendible.
+   - 1–4 si es literal/obvio.
 3) Si NO hay hilo:
-   - Sé claro y honesto: explica por qué no hay un puente claro entre las dos palabras.
-   - Invita al jugador a buscar un vínculo más auténtico.
-
+   - "hay_hilo": false
+   - "puntuacion": 0
+   - "nueva_palabra": DEBE ser exactamente la MISMA que palabraMaquina (para mantener el hilo anterior en modo clásico).
 4) Si SÍ hay hilo:
-   - Explica en 2–4 frases cortas la relación entre las dos palabras.
-   - Usa un lenguaje cercano, con sensibilidad, pero sin ser empalagoso.
-   - Puedes ser algo poético, pero siempre claro.
-
-5) Propón UNA sola palabra nueva que pueda continuar el hilo:
-   - Debe tener sentido interno.
-   - No debe ser obvia ni demasiado literal.
-   - Debe ser una única palabra en minúsculas, con ortografía correcta.
-   - No inventes palabras.
-
-6) Responde SIEMPRE en JSON con este formato EXACTO:
+   - "hay_hilo": true
+   - "puntuacion": 1–10 (10 rarísimo)
+   - "explicacion": 1–3 frases claras + poéticas (sin humo).
+   - "nueva_palabra": UNA sola palabra correcta en español, con tildes si lleva, que continúe el hilo sin ser obvia.
+5) Responde SIEMPRE SOLO en JSON válido, sin texto fuera, con este formato exacto:
 
 {
   "hay_hilo": true | false,
-  "explicacion": "texto corto",
-  "nueva_palabra": "una sola palabra en minusculas, puede llevar tildes y ñ"
+  "puntuacion": 0-10,
+  "explicacion": "texto",
+  "nueva_palabra": "palabra"
 }
-
-No añadas comentarios, saludos ni texto extra fuera del JSON.
 `;
 
-// -------------------- UTILIDADES BÁSICAS --------------------
-
-function normaliza(palabra = "") {
-  return (palabra || "").toString().trim().toLowerCase();
-}
-
-// puntuación sencilla 0-10 según diferencia de letras
-function puntuaSutileza(palabraMaquina, palabraUsuario) {
-  const a = normaliza(palabraMaquina);
-  const b = normaliza(palabraUsuario);
-
-  if (!a || !b) return 0;
-  if (a === b) return 1;
-
-  const sa = new Set(a.split(""));
-  const sb = new Set(b.split(""));
-
-  const inter = [...sa].filter((ch) => sb.has(ch)).length;
-  const union = new Set([...sa, ...sb]).size || 1;
-  const sim = inter / union; // 1 = muy parecidas, 0 = muy diferentes
-
-  let score = Math.round((1 - sim) * 10);
-  if (score < 0) score = 0;
-  if (score > 10) score = 10;
-  return score;
-}
-
-// -------------------- LLAMADA A OPENAI --------------------
-
+// -------------------- IA --------------------
 async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = []) {
-  const userPayload = {
-    palabraMaquina,
-    palabraUsuario,
+  const payload = {
+    palabraMaquina: normaliza(palabraMaquina),
+    palabraUsuario: normaliza(palabraUsuario),
     historial,
   };
 
   const response = await openai.responses.create({
-    model: "gpt-4o-mini", // 👈 CAMBIAMOS AQUÍ EL MODELO
+    model: OPENAI_MODEL,
     input: [
-      {
-        role: "system",
-        content: [
-          {
-            type: "input_text",
-            text: systemPrompt,
-          },
-        ],
-      },
-      {
-        role: "user",
-        content: [
-          {
-            type: "input_text",
-            text: JSON.stringify(userPayload),
-          },
-        ],
-      },
+      { role: "system", content: systemPrompt },
+      { role: "user", content: JSON.stringify(payload) },
     ],
-    max_output_tokens: 300,
+    max_output_tokens: 280,
   });
 
-  // El modelo devuelve output_text
-  const raw = response.output[0].content[0].text || "";
+  const raw = response?.output?.[0]?.content?.[0]?.text || "";
 
-  // Limpiamos posible envoltura ```json ... ```
+  // por si viniera envuelto en ```json
   const cleaned = raw
     .trim()
     .replace(/^```json\s*/i, "")
@@ -139,94 +108,102 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
   try {
     json = JSON.parse(cleaned);
   } catch (e) {
-    console.error("Error al parsear JSON de la IA. Texto recibido:", raw);
-    json = {
+    console.error("IA devolvió JSON inválido:", raw);
+    return {
       hay_hilo: false,
+      puntuacion: 0,
       explicacion:
-        "He percibido interferencia al escuchar el hilo. Prueba de nuevo con otra palabra.",
-      nueva_palabra: "deriva",
+        "Ahora mismo no puedo escuchar el hilo con nitidez. Inténtalo de nuevo.",
+      nueva_palabra: normaliza(palabraMaquina),
     };
   }
 
-  // Aseguramos tipos y campos
+  // Normalización y defensas
   const hay_hilo = !!json.hay_hilo;
 
+  let puntuacion = clampInt(Number(json.puntuacion), 0, 10);
   let explicacion =
     typeof json.explicacion === "string" ? json.explicacion.trim() : "";
 
-  let nueva_palabra =
-    typeof json.nueva_palabra === "string"
-      ? json.nueva_palabra.toLowerCase().trim()
-      : "bruma";
+  let nueva_palabra_raw =
+    typeof json.nueva_palabra === "string" ? json.nueva_palabra : "";
 
-  // Nos quedamos con la primera palabra por si se enrolla
-  if (nueva_palabra.includes(" ")) {
-    nueva_palabra = nueva_palabra.split(/\s+/)[0];
+  // Si NO hay hilo -> puntuación 0 y nueva_palabra = palabraMaquina (NO cambia)
+  if (!hay_hilo) {
+    puntuacion = 0;
+    return {
+      hay_hilo: false,
+      puntuacion,
+      explicacion:
+        explicacion ||
+        "Aquí no encuentro un puente claro entre las dos palabras.",
+      nueva_palabra: normaliza(palabraMaquina),
+    };
   }
 
-  // Permitimos letras con tildes y ñ
-  if (!/^[a-záéíóúüñ]+$/.test(nueva_palabra)) {
-    nueva_palabra = "bruma";
-  }
+  // Si SÍ hay hilo -> limpiamos nueva palabra IA
+  const nueva_palabra = limpiaPalabraIA(nueva_palabra_raw) || null;
 
-  if (!explicacion) {
-    explicacion = hay_hilo
-      ? "Hay un hilo entre ambas palabras, aunque sea fino."
-      : "Aquí no encuentro un puente claro entre las dos palabras.";
-  }
-
-  return { hay_hilo, explicacion, nueva_palabra };
+  return {
+    hay_hilo: true,
+    puntuacion,
+    explicacion:
+      explicacion ||
+      "Hay un hilo entre ambas palabras, fino pero real. Podemos seguirlo.",
+    nueva_palabra: nueva_palabra || normaliza(palabraMaquina), // fallback conservador
+  };
 }
 
 // -------------------- ENDPOINTS --------------------
-
-app.get("/ping", (req, res) => {
-  res.send("pong");
-});
+app.get("/ping", (req, res) => res.send("pong"));
 
 app.post("/jugar", async (req, res) => {
   try {
     const { palabraMaquina, palabraUsuario, historial = [] } = req.body || {};
 
-    const puntuacion = puntuaSutileza(palabraMaquina, palabraUsuario);
+    const pm = normaliza(palabraMaquina);
+    const pu = normaliza(palabraUsuario);
 
-    const ia = await generaRespuestaIA(
-      palabraMaquina,
-      palabraUsuario,
-      historial
-    );
+    if (!pm || !pu) {
+      return res.status(400).json({
+        hay_hilo: false,
+        puntuacion: 0,
+        explicacion: "Necesito dos palabras para poder escuchar el hilo.",
+        nueva_palabra: pm || "amistad",
+      });
+    }
 
-    let explicacion = ia.explicacion || "";
-    let nueva_palabra = ia.nueva_palabra || "bruma";
+    const ia = await generaRespuestaIA(pm, pu, historial);
 
-    nueva_palabra = normaliza(nueva_palabra);
-
+    // Norma del juego:
+    // - Si hay_hilo=false -> nueva_palabra == palabraMaquina (mantener hilo)
+    // - Si hay_hilo=true  -> puede avanzar a nueva palabra
     res.setHeader("Content-Type", "application/json; charset=utf-8");
 
-    res.json({
-      puntuacion,
-      explicacion,
-      nueva_palabra,
-      creditosRestantes: 999, // por ahora fijo
-      hay_hilo: !!ia.hay_hilo,
+    return res.json({
+      hay_hilo: ia.hay_hilo,
+      puntuacion: ia.puntuacion,
+      explicacion: ia.explicacion,
+      nueva_palabra: ia.nueva_palabra,
+      // Quitamos créditos “reales” aquí. Si la app lo necesita aún, lo dejamos vacío.
+      creditosRestantes: null,
     });
   } catch (err) {
     console.error("Error en /jugar:", err);
-    res.status(500).json({
+    return res.status(500).json({
+      hay_hilo: false,
       puntuacion: 0,
       explicacion:
         "Algo se ha enredado en la conexión interna. Prueba de nuevo en unos segundos.",
       nueva_palabra: "deriva",
-      creditosRestantes: 999,
-      hay_hilo: false,
+      creditosRestantes: null,
     });
   }
 });
 
 // -------------------- ARRANQUE --------------------
-
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
   console.log(`Servidor Sutilia escuchando en el puerto ${PORT}`);
+  console.log(`Modelo OpenAI: ${OPENAI_MODEL}`);
 });
