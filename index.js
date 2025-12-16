@@ -6,160 +6,260 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// -------------------- OPENAI --------------------
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 // -------------------- UTILIDADES --------------------
-
-function normaliza(palabra = "") {
-  return (palabra || "").toString().trim().toLowerCase();
+function normaliza(p = "") {
+  return (p || "").toString().trim().toLowerCase();
 }
 
-// puntuación temporal (la afinaremos luego). Por ahora: si NO hay hilo => muy baja.
-function puntuaSutilezaConHilo(hayHilo, palabraMaquina, palabraUsuario) {
-  if (!hayHilo) return 0;
+// Quita tildes para comparaciones internas (pero NO para mostrar)
+// El front ya permite escribir sin tildes; aquí solo normalizamos para lógica.
+function sinTildes(str = "") {
+  return str
+    .replace(/á/g, "a")
+    .replace(/é/g, "e")
+    .replace(/í/g, "i")
+    .replace(/ó/g, "o")
+    .replace(/ú/g, "u")
+    .replace(/ü/g, "u");
+}
 
-  const a = normaliza(palabraMaquina);
-  const b = normaliza(palabraUsuario);
-  if (!a || !b) return 0;
-  if (a === b) return 1;
-
+// similitud de letras (simple)
+function similitudLetras(a, b) {
   const sa = new Set(a.split(""));
   const sb = new Set(b.split(""));
   const inter = [...sa].filter((ch) => sb.has(ch)).length;
   const union = new Set([...sa, ...sb]).size || 1;
-  const sim = inter / union;
-
-  let score = Math.round((1 - sim) * 10);
-  if (score < 0) score = 0;
-  if (score > 10) score = 10;
-
-  // Endurecemos un poco: si es muy literal, que no suba tanto
-  if (score > 7) score = 7;
-
-  return score;
+  return inter / union;
 }
 
-// -------------------- PROMPT (VOZ SABIA + FIRME) --------------------
+/**
+ * Regla NUEVA de puntuación:
+ * - Si NO hay hilo: score máximo 2 (o 3 si quieres) aunque sean “muy diferentes”.
+ * - Si SÍ hay hilo: score viene del modelo (0–10) pero lo “endurecemos” un poco.
+ */
+function calculaScoreFinal({ hay_hilo, fuerza_hilo, palabraMaquina, palabraUsuario }) {
+  const a = sinTildes(normaliza(palabraMaquina));
+  const b = sinTildes(normaliza(palabraUsuario));
+  if (!a || !b) return 0;
+  if (a === b) return 1;
 
+  const sim = similitudLetras(a, b); // 0..1
+
+  if (!hay_hilo) {
+    // Sin hilo = no hay 8/9/10 jamás
+    // Pequeña variación para que no sea siempre 0:
+    // si son MUY parecidas (sim alto) => 0 o 1
+    // si son muy distintas (sim bajo) => 2
+    if (sim > 0.6) return 0;
+    if (sim > 0.35) return 1;
+    return 2; // máximo sin hilo
+  }
+
+  // Con hilo: partimos de fuerza_hilo 0..10
+  let s = Math.round(Number(fuerza_hilo ?? 5));
+
+  // Endurecimiento: el 10 tiene que ser raro, y el 9 también
+  // (baja 1 punto si es “demasiado fácil” por letras muy similares)
+  if (sim > 0.55 && s >= 8) s -= 1;
+
+  // Cap
+  if (s < 0) s = 0;
+  if (s > 10) s = 10;
+  return s;
+}
+
+// -------------------- PALABRAS SEMILLA --------------------
+const PALABRAS_SEMILLA = [
+  "bruma",
+  "orilla",
+  "invierno",
+  "latido",
+  "deriva",
+  "umbría",
+  "faro",
+  "vacío",
+  "círculo",
+  "marea",
+  "trama",
+  "lazo",
+  "umbral",
+  "raíces",
+  "eco",
+  "claridad",
+];
+
+function siguientePalabraEvitaRepetir({ propuesta, palabraMaquina, palabraUsuario, historial }) {
+  const usados = new Set(
+    [palabraMaquina, palabraUsuario, ...(historial || [])]
+      .map((x) => sinTildes(normaliza(x)))
+      .filter(Boolean)
+  );
+
+  let cand = normaliza(propuesta || "");
+  if (!cand) cand = "bruma";
+
+  // Mantén tildes/ñ si vienen bien, pero validamos que sea “una palabra”
+  cand = cand.split(/\s+/)[0].trim();
+
+  // Si repite, buscamos otra semilla distinta
+  const candKey = sinTildes(cand);
+  if (usados.has(candKey)) {
+    for (let i = 0; i < PALABRAS_SEMILLA.length; i++) {
+      const alt = PALABRAS_SEMILLA[Math.floor(Math.random() * PALABRAS_SEMILLA.length)];
+      if (!usados.has(sinTildes(alt))) return alt;
+    }
+    return "bruma";
+  }
+
+  return cand;
+}
+
+// -------------------- PROMPT (VOZ SABIA, FIRME, NO COMPLACIENTE) --------------------
 const systemPrompt = `
-Eres SUTILIA: una voz interior sabia, amorosa y firme.
-No juzgas ni gritas. No eres complaciente. No inventas conexiones para “quedar bien”.
-Tu trabajo es VER si existe un hilo real entre dos palabras, y acompañar al jugador a encontrarlo.
+Eres SUTILIA: una voz interior sabia, amable y firme.
+No juzgas, no gritas, no complacés. Si no hay hilo, lo dices con claridad y verdad.
 
-Reglas:
-- Si NO hay hilo, di claramente que NO hay hilo. Sin adornos innecesarios.
-- Si SÍ hay hilo, descríbelo con claridad (poético, sí, pero entendible).
-- La palabra nueva debe ser UNA sola palabra en español, correctamente escrita (con tildes si toca).
-- Esa palabra nueva debe ser coherente con el hilo y no ser obvia.
-- Responde SOLO en JSON válido, sin texto fuera.
+TAREA:
+- Decide si hay un hilo REAL entre dos palabras (semántico, simbólico o experiencial).
+- Si NO hay hilo: di "no hay hilo" sin inventar puentes.
+- Si SÍ hay hilo: explica el hilo en 2–4 frases claras y poéticas (pero comprensibles).
+- Devuelve una puntuación de "fuerza_hilo" de 0 a 10:
+    0–2: prácticamente no hay hilo
+    3–5: hilo débil, apenas
+    6–8: hilo real, sutil
+    9: hilo muy fino y brillante (raro)
+    10: hilo excepcional (MUY raro; sólo si es una conexión sorprendente y coherente)
+- Propón UNA sola palabra nueva (una palabra), con tildes correctas si procede.
+  Debe abrir un camino no obvio, con intención y sentido, y evitar repetir palabras ya usadas.
 
-Formato exacto:
+RESPONDE SIEMPRE en JSON válido, SIN texto extra, con EXACTAMENTE estas claves:
 {
-  "hay_hilo": true | false,
-  "explicacion": "2 a 4 frases, claras, sin relleno",
-  "nueva_palabra": "una sola palabra"
+  "hay_hilo": true|false,
+  "fuerza_hilo": 0-10,
+  "explicacion": "string",
+  "nueva_palabra": "string"
 }
-
-Criterio de hilo:
-- Debe existir un puente narrativo razonable (A→B con un pequeño recorrido), NO saltos aleatorios.
-- Si parecen elegidas al azar, hay_hilo = false.
 `;
 
 // -------------------- IA --------------------
-
 async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = []) {
-  const userPayload = { palabraMaquina, palabraUsuario, historial };
+  const payload = {
+    palabraMaquina,
+    palabraUsuario,
+    historial,
+  };
 
   const response = await openai.responses.create({
-    model: "gpt-4o-mini",
+    model: MODEL,
     input: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: JSON.stringify(userPayload) },
+      {
+        role: "system",
+        content: [{ type: "input_text", text: systemPrompt }],
+      },
+      {
+        role: "user",
+        content: [{ type: "input_text", text: JSON.stringify(payload) }],
+      },
     ],
-    max_output_tokens: 260,
+    max_output_tokens: 350,
   });
 
-  const raw = response.output?.[0]?.content?.[0]?.text || "";
-
-  const cleaned = raw
-    .trim()
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```$/i, "")
-    .trim();
+  // Node SDK suele dar esto listo:
+  const raw = (response.output_text || "").trim();
 
   let json;
   try {
-    json = JSON.parse(cleaned);
+    json = JSON.parse(raw);
   } catch (e) {
-    console.error("IA devolvió algo no-JSON. Texto recibido:", raw);
-    return {
+    console.error("JSON IA inválido. Texto recibido:", raw);
+    json = {
       hay_hilo: false,
+      fuerza_hilo: 1,
       explicacion:
-        "Ahora mismo no puedo escuchar con nitidez. Prueba otra palabra: busca un puente real, no un salto al azar.",
-      nueva_palabra: palabraMaquina || "bruma",
+        "No puedo leer el hilo ahora mismo. Respira y prueba otra palabra.",
+      nueva_palabra: "bruma",
     };
   }
 
   const hay_hilo = !!json.hay_hilo;
-  const explicacion =
-    typeof json.explicacion === "string" && json.explicacion.trim()
-      ? json.explicacion.trim()
-      : hay_hilo
-      ? "Sí hay hilo, pero es muy fino. Acércate: nómbralo con precisión."
-      : "Aquí no encuentro un puente real entre las dos palabras. Intenta otra, más honesta con lo que sientes.";
+  let fuerza_hilo = Number(json.fuerza_hilo);
+  if (!Number.isFinite(fuerza_hilo)) fuerza_hilo = hay_hilo ? 5 : 1;
+  fuerza_hilo = Math.max(0, Math.min(10, Math.round(fuerza_hilo)));
 
-  let nueva_palabra =
-    typeof json.nueva_palabra === "string" && json.nueva_palabra.trim()
-      ? json.nueva_palabra.trim()
-      : palabraMaquina || "bruma";
-
-  // Solo la primera palabra si mete más de una
-  if (/\s/.test(nueva_palabra)) nueva_palabra = nueva_palabra.split(/\s+/)[0];
-
-  // Permitimos letras españolas con tildes y ñ
-  if (!/^[a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]+$/.test(nueva_palabra)) {
-    nueva_palabra = palabraMaquina || "bruma";
+  let explicacion =
+    typeof json.explicacion === "string" ? json.explicacion.trim() : "";
+  if (!explicacion) {
+    explicacion = hay_hilo
+      ? "Hay un hilo, aunque sea fino."
+      : "Aquí no encuentro un puente real entre las dos palabras.";
   }
 
-  // Normalizamos solo espacios alrededor; NO quitamos tildes
-  return { hay_hilo, explicacion, nueva_palabra };
+  let propuesta =
+    typeof json.nueva_palabra === "string" ? json.nueva_palabra.trim() : "";
+  if (!propuesta) propuesta = "bruma";
+
+  const nueva_palabra = siguientePalabraEvitaRepetir({
+    propuesta,
+    palabraMaquina,
+    palabraUsuario,
+    historial,
+  });
+
+  return { hay_hilo, fuerza_hilo, explicacion, nueva_palabra };
 }
 
 // -------------------- ENDPOINTS --------------------
-
 app.get("/ping", (req, res) => res.send("pong"));
 
 app.post("/jugar", async (req, res) => {
   try {
     const { palabraMaquina, palabraUsuario, historial = [] } = req.body || {};
 
-    const ia = await generaRespuestaIA(palabraMaquina, palabraUsuario, historial);
+    const pm = normaliza(palabraMaquina);
+    const pu = normaliza(palabraUsuario);
 
-    // Si NO hay hilo, NO avanzamos palabra: se mantiene la misma
-    const palabraSiguiente = ia.hay_hilo ? ia.nueva_palabra : palabraMaquina;
+    if (!pm || !pu) {
+      return res.status(400).json({
+        puntuacion: 0,
+        explicacion: "Necesito dos palabras para poder escuchar el hilo.",
+        nueva_palabra: pm || "bruma",
+        hay_hilo: false,
+      });
+    }
 
-    const puntuacion = puntuaSutilezaConHilo(
-      ia.hay_hilo,
-      palabraMaquina,
-      palabraUsuario
-    );
+    const ia = await generaRespuestaIA(pm, pu, historial);
+
+    const puntuacion = calculaScoreFinal({
+      hay_hilo: ia.hay_hilo,
+      fuerza_hilo: ia.fuerza_hilo,
+      palabraMaquina: pm,
+      palabraUsuario: pu,
+    });
 
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.json({
-      hay_hilo: ia.hay_hilo,
-      explicacion: ia.explicacion,
-      nueva_palabra: palabraSiguiente,
       puntuacion,
+      explicacion: ia.explicacion,
+      nueva_palabra: ia.nueva_palabra,
+      hay_hilo: ia.hay_hilo,
+      // IMPORTANTe: por ahora NO mandamos créditos (si quieres, lo quitamos del front)
+      // creditosRestantes: 999,
     });
   } catch (err) {
     console.error("Error en /jugar:", err);
     res.status(500).json({
-      hay_hilo: false,
-      explicacion:
-        "Se ha cortado el hilo de conexión. Respira y prueba de nuevo en unos segundos.",
-      nueva_palabra: req.body?.palabraMaquina || "bruma",
       puntuacion: 0,
+      explicacion:
+        "Ahora mismo hay ruido en la conexión. Vuelve a intentarlo en unos segundos.",
+      nueva_palabra: "bruma",
+      hay_hilo: false,
     });
   }
 });
