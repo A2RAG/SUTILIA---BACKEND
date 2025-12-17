@@ -12,7 +12,6 @@ const openai = new OpenAI({
 });
 
 // Usa un modelo que exista en tu cuenta.
-// Por defecto: gpt-4o-mini (en tu lista sí aparece)
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 // -------------------- UTILIDADES --------------------
@@ -43,29 +42,45 @@ function similitudLetras(a, b) {
 }
 
 /**
- * Limpieza FUERTE de palabra generada por IA:
+ * Limpieza "correcta en español" para palabra IA:
  * - 1 sola palabra
  * - minúsculas
- * - elimina diacríticos raros (ö, ê, å...) => o/e/a...
- * - permite solo [a-z] y ñ
- * - devuelve "bruma" si queda vacía
+ * - permite áéíóúüñ (NO las borra)
+ * - convierte diacríticos NO españoles a letras base (ö->o, ê->e, ç->c, etc.)
+ * - si no queda una palabra válida -> "bruma"
  */
 function limpiaPalabraIA(str = "") {
   let w = (str || "").toString().trim().toLowerCase().split(/\s+/)[0] || "";
 
-  // Quita cualquier diacrítico Unicode (incluye ö -> o)
-  w = w.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  // Normalizamos a NFC para evitar combinaciones raras
+  w = w.normalize("NFC");
 
-  // Permitimos letras a-z y ñ
-  w = w.replace(/[^a-zñ]/g, "");
+  // Convertimos diacríticos NO españoles a base
+  // (NO tocamos áéíóúüñ)
+  w = w
+    .replace(/[àâãäåāăą]/g, "a")
+    .replace(/[èêëēĕėęě]/g, "e")
+    .replace(/[ìîïīĭįı]/g, "i")
+    .replace(/[òôõöōŏő]/g, "o")
+    .replace(/[ùûūŭůű]/g, "u")
+    .replace(/[çćč]/g, "c");
 
-  return w || "bruma";
+  // Quitamos signos raros
+  w = w.replace(/[^a-záéíóúüñ]/g, "");
+
+  // Debe ser SOLO letras españolas (con tildes/ü/ñ) y mínimo 2 letras
+  if (!/^[a-záéíóúüñ]{2,}$/.test(w)) return "bruma";
+
+  // Filtros anti “inventos” típicos
+  if (w.includes("brew")) return "bruma";
+
+  return w;
 }
 
 /**
- * Regla NUEVA de puntuación:
- * - Si NO hay hilo: score máximo 2 (jamás 8/9/10)
- * - Si SÍ hay hilo: score viene de fuerza_hilo 0..10, con endurecimiento extra
+ * Regla de puntuación (endurecida):
+ * - Si NO hay hilo: máximo 2
+ * - Si SÍ hay hilo: viene de fuerza_hilo 0..10, pero el 9/10 son raros
  */
 function calculaScoreFinal({ hay_hilo, fuerza_hilo, palabraMaquina, palabraUsuario }) {
   const a = sinTildes(normaliza(palabraMaquina));
@@ -73,21 +88,17 @@ function calculaScoreFinal({ hay_hilo, fuerza_hilo, palabraMaquina, palabraUsuar
   if (!a || !b) return 0;
   if (a === b) return 1;
 
-  const sim = similitudLetras(a, b); // 0..1
+  const sim = similitudLetras(a, b);
 
   if (!hay_hilo) {
     if (sim > 0.6) return 0;
     if (sim > 0.35) return 1;
-    return 2; // máximo sin hilo
+    return 2;
   }
 
   let s = Math.round(Number(fuerza_hilo ?? 5));
 
-  // El 10 tiene que ser raro. Endurecemos:
-  // - si s >= 9, lo bajamos 1 salvo que sea MUY distinto en letras (sim bajo)
   if (s >= 9 && sim > 0.25) s -= 1;
-
-  // - si es “demasiado fácil” por letras parecidas y s alto, baja 1
   if (sim > 0.55 && s >= 8) s -= 1;
 
   if (s < 0) s = 0;
@@ -95,37 +106,33 @@ function calculaScoreFinal({ hay_hilo, fuerza_hilo, palabraMaquina, palabraUsuar
   return s;
 }
 
-// -------------------- PALABRAS SEMILLA --------------------
+// -------------------- PALABRAS SEMILLA (BONITAS + CORRECTAS) --------------------
 const PALABRAS_SEMILLA = [
   "bruma",
   "orilla",
   "invierno",
   "latido",
   "deriva",
-  "umbria",
+  "umbría",
   "faro",
-  "vacio",
-  "circulo",
+  "vacío",
+  "círculo",
   "marea",
   "trama",
   "lazo",
   "umbral",
-  "raices",
+  "raíces",
   "eco",
   "claridad",
   "susurro",
   "memoria",
-  "pulso",     // si no te gusta, quítala
+  "pulso",
 ];
 
 function palabraSemillaAleatoria() {
   return PALABRAS_SEMILLA[Math.floor(Math.random() * PALABRAS_SEMILLA.length)];
 }
 
-/**
- * Evita repetir palabras ya usadas (comparación sin tildes)
- * Nota: aquí ya entra TODO limpio por limpiaPalabraIA()
- */
 function siguientePalabraEvitaRepetir({ propuesta, palabraMaquina, palabraUsuario, historial }) {
   const usados = new Set(
     [palabraMaquina, palabraUsuario, ...(historial || [])]
@@ -134,10 +141,9 @@ function siguientePalabraEvitaRepetir({ propuesta, palabraMaquina, palabraUsuari
   );
 
   let cand = limpiaPalabraIA(propuesta);
-
   const candKey = sinTildes(cand);
+
   if (usados.has(candKey)) {
-    // Busca una semilla distinta
     for (let i = 0; i < 30; i++) {
       const alt = palabraSemillaAleatoria();
       if (!usados.has(sinTildes(alt))) return alt;
@@ -148,23 +154,21 @@ function siguientePalabraEvitaRepetir({ propuesta, palabraMaquina, palabraUsuari
   return cand;
 }
 
-// -------------------- PROMPT (VOZ SABIA, FIRME, NO COMPLACIENTE) --------------------
+// -------------------- PROMPT --------------------
 const systemPrompt = `
 Eres SUTILIA: una voz interior sabia, amable y firme.
-No juzgas, no gritas, no complacés. Si no hay hilo, lo dices con claridad y verdad.
+No juzgas, no gritas, no complacés. Si no hay hilo, lo dices con claridad.
+
+REGLAS:
+- Escribe SIEMPRE en español correcto, con tildes bien puestas.
+- NO uses anglicismos ni palabras inventadas.
 
 TAREA:
-- Decide si hay un hilo REAL entre dos palabras (semántico, simbólico o experiencial).
-- Si NO hay hilo: di "no hay hilo" sin inventar puentes.
-- Si SÍ hay hilo: explica el hilo en 2–4 frases claras y poéticas (comprensibles).
-- Devuelve "fuerza_hilo" de 0 a 10:
-    0–2: prácticamente no hay hilo
-    3–5: hilo débil
-    6–8: hilo real y sutil
-    9: hilo brillante (raro)
-    10: hilo excepcional (muy raro; sólo si la conexión es sorprendente y coherente)
-- Propón UNA sola palabra nueva (una palabra), correcta en español.
-  Debe abrir un camino no obvio, con sentido e intención, y evitar repetir palabras ya usadas.
+- Decide si hay un hilo REAL entre dos palabras.
+- Si NO hay hilo: dilo con claridad, sin inventar puentes.
+- Si SÍ hay hilo: explica el hilo en 2–4 frases claras y poéticas.
+- Devuelve "fuerza_hilo" (0 a 10) siendo 9 y 10 MUY raros.
+- Propón UNA sola palabra nueva, real en español, con tildes correctas si procede.
 
 RESPONDE SIEMPRE en JSON válido, SIN texto extra, con EXACTAMENTE estas claves:
 {
@@ -182,19 +186,12 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
   const response = await openai.responses.create({
     model: MODEL,
     input: [
-      {
-        role: "system",
-        content: [{ type: "input_text", text: systemPrompt }],
-      },
-      {
-        role: "user",
-        content: [{ type: "input_text", text: JSON.stringify(payload) }],
-      },
+      { role: "system", content: [{ type: "input_text", text: systemPrompt }] },
+      { role: "user", content: [{ type: "input_text", text: JSON.stringify(payload) }] },
     ],
     max_output_tokens: 350,
   });
 
-  // SDK: response.output_text suele venir ya listo
   const raw = (response.output_text || "").trim();
 
   let json;
@@ -225,7 +222,6 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
 
   const propuesta = typeof json.nueva_palabra === "string" ? json.nueva_palabra.trim() : "bruma";
 
-  // CLAVE: limpiamos y evitamos repetir SIEMPRE
   const nueva_palabra = siguientePalabraEvitaRepetir({
     propuesta,
     palabraMaquina,
@@ -239,7 +235,6 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
 // -------------------- ENDPOINTS --------------------
 app.get("/ping", (req, res) => res.send("pong"));
 
-// Opcional: para que el front pida una primera palabra aleatoria y no “amistad”
 app.get("/seed", (req, res) => {
   res.json({ palabra: palabraSemillaAleatoria() });
 });
@@ -248,7 +243,6 @@ app.post("/jugar", async (req, res) => {
   try {
     const { palabraMaquina, palabraUsuario, historial = [] } = req.body || {};
 
-    // si el front aún no manda palabraMaquina, damos una semilla
     const pm = normaliza(palabraMaquina) || palabraSemillaAleatoria();
     const pu = normaliza(palabraUsuario);
 
@@ -276,7 +270,6 @@ app.post("/jugar", async (req, res) => {
       explicacion: ia.explicacion,
       nueva_palabra: ia.nueva_palabra,
       hay_hilo: ia.hay_hilo,
-      // Créditos: fuera por ahora
     });
   } catch (err) {
     console.error("Error en /jugar:", err);
