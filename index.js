@@ -115,8 +115,7 @@ const PALABRAS_SEMILLA = [
   "claridad",
   "susurro",
   "memoria",
-  "pulso",
-  "umedo",     // si no te gusta, quítala
+  "pulso",     // si no te gusta, quítala
 ];
 
 function palabraSemillaAleatoria() {
