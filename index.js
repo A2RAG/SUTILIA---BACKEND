@@ -164,7 +164,11 @@ TAREA:
 - Si NO hay hilo: dilo con claridad, sin inventar puentes.
 - Si SÍ hay hilo: explica el hilo en 2–4 frases claras y poéticas.
 - Devuelve "fuerza_hilo" (0 a 10) siendo 9 y 10 MUY raros.
-- Propón UNA sola palabra nueva, real en español, con tildes correctas si procede.
+- Propón UNA sola palabra nueva (una palabra), correcta en español (con tildes si las lleva).
+  NO inventes palabras. NO uses anglicismos. NO uses nombres propios.
+  Si dudas, elige una palabra común y real.
+  Si no encuentras una buena, elige una de estas semillas seguras:
+  bruma, orilla, invierno, latido, deriva, umbría, faro, vacío, círculo, marea, trama, lazo, umbral, raíces, eco, claridad, susurro, memoria, pulso
 
 RESPONDE SIEMPRE en JSON válido, SIN texto extra, con EXACTAMENTE estas claves:
 {
