@@ -52,30 +52,26 @@ function similitudLetras(a, b) {
 function limpiaPalabraIA(str = "") {
   let w = (str || "").toString().trim().toLowerCase().split(/\s+/)[0] || "";
 
-  // Normalizamos a NFC para evitar combinaciones raras
-  w = w.normalize("NFC");
-
-  // Convertimos diacríticos NO españoles a base
-  // (NO tocamos áéíóúüñ)
+  // 1) Convertimos diacríticos NO españoles a su vocal base
+  // (pero mantenemos áéíóúüñ tal cual)
   w = w
-    .replace(/[àâãäåāăą]/g, "a")
+    .replace(/[àâäãåāăą]/g, "a")
     .replace(/[èêëēĕėęě]/g, "e")
-    .replace(/[ìîïīĭįı]/g, "i")
-    .replace(/[òôõöōŏő]/g, "o")
-    .replace(/[ùûūŭůű]/g, "u")
-    .replace(/[çćč]/g, "c");
+    .replace(/[ìîïīĭį]/g, "i")
+    .replace(/[òôöõōŏő]/g, "o")
+    .replace(/[ùûūŭůűų]/g, "u");
 
-  // Quitamos signos raros
+  // 2) Quitamos SOLO diacríticos combinados raros
+  // (si viniesen como marcas sueltas)
+  w = w.normalize("NFD").replace(/\p{Mn}+/gu, "").normalize("NFC");
+
+  // 3) Permitimos solo letras españolas
   w = w.replace(/[^a-záéíóúüñ]/g, "");
 
-  // Debe ser SOLO letras españolas (con tildes/ü/ñ) y mínimo 2 letras
-  if (!/^[a-záéíóúüñ]{2,}$/.test(w)) return "bruma";
-
-  // Filtros anti “inventos” típicos
-  if (w.includes("brew")) return "bruma";
-
-  return w;
+  // 4) Si queda vacío, fallback
+  return w || "bruma";
 }
+
 
 /**
  * Regla de puntuación (endurecida):
