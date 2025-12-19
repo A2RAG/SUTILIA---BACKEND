@@ -124,6 +124,16 @@ function sinTildes(str = "") {
 // -------------------- DICCIONARIO: MAPA PARA RESTAURAR TILDES --------------------
 // Rellena este Map después de cargar el diccionario (ver paso 2)
 let MAPA_TILDES = new Map();
+const TILDES_OVERRIDE = new Map([
+  ["vacio", "vacío"],
+  ["circulo", "círculo"],
+  ["metafora", "metáfora"],
+  ["raices", "raíces"],
+  ["umbria", "umbría"],
+  ["credito", "crédito"],
+  ["musica", "música"],
+  ["arbol", "árbol"],
+]);
 
 // ¿Tiene tildes españolas?
 function tieneTildesES(w = "") {
@@ -390,7 +400,11 @@ app.post("/jugar", async (req, res) => {
     res.json({
       puntuacion,
       explicacion: ia.explicacion,
-      nueva_palabra: MAPA_TILDES.get(sinTildes(ia.nueva_palabra)) || ia.nueva_palabra,
+      nueva_palabra:
+  TILDES_OVERRIDE.get(sinTildes(ia.nueva_palabra)) ||
+  MAPA_TILDES.get(sinTildes(ia.nueva_palabra)) ||
+  ia.nueva_palabra,
+
       hay_hilo: ia.hay_hilo,
     });
   } catch (err) {
