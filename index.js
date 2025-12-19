@@ -64,6 +64,28 @@ async function cargaDiccionario() {
 
     DICCIONARIO_SET = set;
     console.log(`✅ Diccionario cargado: ${set.size} palabras (${path.basename(DICT_PATH)})`);
+    // -------------------- MAPA PARA RESTAURAR TILDES --------------------
+MAPA_TILDES = new Map();
+
+for (const w of diccionario_es.txt) {   // 👈 ESTE NOMBRE DEBE SER EL TUYO
+  const key = sinTildes(w);
+  if (!key) continue;
+
+  const prev = MAPA_TILDES.get(key);
+
+  if (!prev) {
+    MAPA_TILDES.set(key, w);
+  } else {
+    const prevTiene = tieneTildesES(prev);
+    const wTiene = tieneTildesES(w);
+    if (!prevTiene && wTiene) {
+      MAPA_TILDES.set(key, w);
+    }
+  }
+}
+
+console.log("Mapa de tildes creado:", MAPA_TILDES.size);
+    
     return set;
   } catch (e) {
     console.error(
@@ -98,6 +120,22 @@ function sinTildes(str = "") {
     .replace(/ó/g, "o")
     .replace(/ú/g, "u")
     .replace(/ü/g, "u");
+}
+// -------------------- DICCIONARIO: MAPA PARA RESTAURAR TILDES --------------------
+// Rellena este Map después de cargar el diccionario (ver paso 2)
+let MAPA_TILDES = new Map();
+
+// ¿Tiene tildes españolas?
+function tieneTildesES(w = "") {
+  return /[áéíóúü]/i.test(w);
+}
+
+// Devuelve la versión "bonita" (con tildes) si existe en el diccionario.
+// Si no, devuelve la original.
+function restauraTildesConDiccionario(palabra = "") {
+  const k = sinTildes(normaliza(palabra));
+  if (!k) return palabra;
+  return MAPA_TILDES.get(k) || palabra;
 }
 
 // Similaridad de letras (simple, barata, estable)
@@ -352,7 +390,7 @@ app.post("/jugar", async (req, res) => {
     res.json({
       puntuacion,
       explicacion: ia.explicacion,
-      nueva_palabra: ia.nueva_palabra, // ya validada (o seed fallback)
+      nueva_palabra: MAPA_TILDES.get(sinTildes(ia.nueva_palabra)) || ia.nueva_palabra,
       hay_hilo: ia.hay_hilo,
     });
   } catch (err) {
