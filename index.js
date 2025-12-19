@@ -1,6 +1,9 @@
 import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
+import fs from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const app = express();
 app.use(express.json());
@@ -13,6 +16,71 @@ const openai = new OpenAI({
 
 // Usa un modelo que exista en tu cuenta.
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+// -------------------- RUTAS / DICCIONARIO --------------------
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Pon aquí el diccionario “igual que Android”
+const DICT_PATH = path.join(__dirname, "diccionario_es.txt");
+
+// Cargamos una vez y cacheamos
+let DICCIONARIO_SET = null;
+
+// Normalización robusta SIN perder la ñ
+function normalizaParaDiccionario(str = "") {
+  let s = (str || "").toString().trim().toLowerCase();
+  if (!s) return "";
+
+  // Protegemos ñ antes de quitar diacríticos
+  s = s.replace(/ñ/g, "__enie__");
+
+  // Quita diacríticos (áéíóúü etc)
+  s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // Recupera ñ
+  s = s.replace(/__enie__/g, "ñ");
+
+  // 1 sola palabra
+  s = s.split(/\s+/)[0] || "";
+
+  // Solo letras a-z y ñ
+  s = s.replace(/[^a-zñ]/g, "");
+
+  return s;
+}
+
+async function cargaDiccionario() {
+  if (DICCIONARIO_SET) return DICCIONARIO_SET;
+
+  try {
+    const raw = await fs.readFile(DICT_PATH, "utf-8");
+    const set = new Set();
+
+    for (const line of raw.split(/\r?\n/)) {
+      const w = normalizaParaDiccionario(line);
+      if (w) set.add(w);
+    }
+
+    DICCIONARIO_SET = set;
+    console.log(`✅ Diccionario cargado: ${set.size} palabras (${path.basename(DICT_PATH)})`);
+    return set;
+  } catch (e) {
+    console.error(
+      `❌ No pude cargar ${path.basename(DICT_PATH)}. ` +
+      `Crea el archivo junto a index.js con 1 palabra por línea. Error:`,
+      e?.message || e
+    );
+    DICCIONARIO_SET = new Set(); // seguimos con fallback
+    return DICCIONARIO_SET;
+  }
+}
+
+function esValidaEnDiccionario(palabra) {
+  if (!DICCIONARIO_SET || DICCIONARIO_SET.size === 0) return false;
+  const w = normalizaParaDiccionario(palabra);
+  return w && DICCIONARIO_SET.has(w);
+}
 
 // -------------------- UTILIDADES --------------------
 function normaliza(p = "") {
@@ -42,41 +110,21 @@ function similitudLetras(a, b) {
 }
 
 /**
- * Limpieza "correcta en español" para palabra IA:
+ * Limpieza FUERTE de palabra generada por IA:
  * - 1 sola palabra
  * - minúsculas
- * - permite áéíóúüñ (NO las borra)
- * - convierte diacríticos NO españoles a letras base (ö->o, ê->e, ç->c, etc.)
- * - si no queda una palabra válida -> "bruma"
+ * - elimina diacríticos raros
+ * - permite solo [a-z] y ñ
  */
 function limpiaPalabraIA(str = "") {
-  let w = (str || "").toString().trim().toLowerCase().split(/\s+/)[0] || "";
-
-  // 1) Convertimos diacríticos NO españoles a su vocal base
-  // (pero mantenemos áéíóúüñ tal cual)
-  w = w
-    .replace(/[àâäãåāăą]/g, "a")
-    .replace(/[èêëēĕėęě]/g, "e")
-    .replace(/[ìîïīĭį]/g, "i")
-    .replace(/[òôöõōŏő]/g, "o")
-    .replace(/[ùûūŭůűų]/g, "u");
-
-  // 2) Quitamos SOLO diacríticos combinados raros
-  // (si viniesen como marcas sueltas)
-  w = w.normalize("NFD").replace(/\p{Mn}+/gu, "").normalize("NFC");
-
-  // 3) Permitimos solo letras españolas
-  w = w.replace(/[^a-záéíóúüñ]/g, "");
-
-  // 4) Si queda vacío, fallback
-  return w || "bruma";
+  // Usamos la misma normalización que para diccionario
+  return normalizaParaDiccionario(str) || "bruma";
 }
 
-
 /**
- * Regla de puntuación (endurecida):
- * - Si NO hay hilo: máximo 2
- * - Si SÍ hay hilo: viene de fuerza_hilo 0..10, pero el 9/10 son raros
+ * Regla de puntuación:
+ * - Si NO hay hilo: score máximo 2
+ * - Si SÍ hay hilo: score viene de fuerza_hilo 0..10 con endurecimiento
  */
 function calculaScoreFinal({ hay_hilo, fuerza_hilo, palabraMaquina, palabraUsuario }) {
   const a = sinTildes(normaliza(palabraMaquina));
@@ -84,7 +132,7 @@ function calculaScoreFinal({ hay_hilo, fuerza_hilo, palabraMaquina, palabraUsuar
   if (!a || !b) return 0;
   if (a === b) return 1;
 
-  const sim = similitudLetras(a, b);
+  const sim = similitudLetras(a, b); // 0..1
 
   if (!hay_hilo) {
     if (sim > 0.6) return 0;
@@ -102,22 +150,22 @@ function calculaScoreFinal({ hay_hilo, fuerza_hilo, palabraMaquina, palabraUsuar
   return s;
 }
 
-// -------------------- PALABRAS SEMILLA (BONITAS + CORRECTAS) --------------------
+// -------------------- PALABRAS SEMILLA --------------------
 const PALABRAS_SEMILLA = [
   "bruma",
   "orilla",
   "invierno",
   "latido",
   "deriva",
-  "umbría",
+  "umbria",
   "faro",
-  "vacío",
-  "círculo",
+  "vacio",
+  "circulo",
   "marea",
   "trama",
   "lazo",
   "umbral",
-  "raíces",
+  "raices",
   "eco",
   "claridad",
   "susurro",
@@ -129,6 +177,9 @@ function palabraSemillaAleatoria() {
   return PALABRAS_SEMILLA[Math.floor(Math.random() * PALABRAS_SEMILLA.length)];
 }
 
+/**
+ * Evita repetir palabras ya usadas (comparación sin tildes)
+ */
 function siguientePalabraEvitaRepetir({ propuesta, palabraMaquina, palabraUsuario, historial }) {
   const usados = new Set(
     [palabraMaquina, palabraUsuario, ...(historial || [])]
@@ -150,25 +201,24 @@ function siguientePalabraEvitaRepetir({ propuesta, palabraMaquina, palabraUsuari
   return cand;
 }
 
-// -------------------- PROMPT --------------------
+// -------------------- PROMPT (VOZ SABIA, FIRME) --------------------
 const systemPrompt = `
 Eres SUTILIA: una voz interior sabia, amable y firme.
-No juzgas, no gritas, no complacés. Si no hay hilo, lo dices con claridad.
-
-REGLAS:
-- Escribe SIEMPRE en español correcto, con tildes bien puestas.
-- NO uses anglicismos ni palabras inventadas.
+No juzgas, no gritas, no complacés. Si no hay hilo, lo dices con claridad y verdad.
 
 TAREA:
-- Decide si hay un hilo REAL entre dos palabras.
-- Si NO hay hilo: dilo con claridad, sin inventar puentes.
-- Si SÍ hay hilo: explica el hilo en 2–4 frases claras y poéticas.
-- Devuelve "fuerza_hilo" (0 a 10) siendo 9 y 10 MUY raros.
-- Propón UNA sola palabra nueva (una palabra), correcta en español (con tildes si las lleva).
-  NO inventes palabras. NO uses anglicismos. NO uses nombres propios.
-  Si dudas, elige una palabra común y real.
-  Si no encuentras una buena, elige una de estas semillas seguras:
-  bruma, orilla, invierno, latido, deriva, umbría, faro, vacío, círculo, marea, trama, lazo, umbral, raíces, eco, claridad, susurro, memoria, pulso
+- Decide si hay un hilo REAL entre dos palabras (semántico, simbólico o experiencial).
+- Si NO hay hilo: di "no hay hilo" sin inventar puentes.
+- Si SÍ hay hilo: explica el hilo en 2–4 frases claras y poéticas (comprensibles).
+- Devuelve "fuerza_hilo" de 0 a 10:
+    0–2: prácticamente no hay hilo
+    3–5: hilo débil
+    6–8: hilo real y sutil
+    9: hilo brillante (raro)
+    10: hilo excepcional (muy raro; sólo si la conexión es sorprendente y coherente)
+- Propón UNA sola palabra nueva (una palabra), correcta en español, común y reconocible.
+  Evita palabras inventadas, extranjerismos y rarezas ortográficas.
+  Debe abrir un camino no obvio, con sentido e intención, y evitar repetir palabras ya usadas.
 
 RESPONDE SIEMPRE en JSON válido, SIN texto extra, con EXACTAMENTE estas claves:
 {
@@ -186,8 +236,14 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
   const response = await openai.responses.create({
     model: MODEL,
     input: [
-      { role: "system", content: [{ type: "input_text", text: systemPrompt }] },
-      { role: "user", content: [{ type: "input_text", text: JSON.stringify(payload) }] },
+      {
+        role: "system",
+        content: [{ type: "input_text", text: systemPrompt }],
+      },
+      {
+        role: "user",
+        content: [{ type: "input_text", text: JSON.stringify(payload) }],
+      },
     ],
     max_output_tokens: 350,
   });
@@ -232,6 +288,30 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
   return { hay_hilo, fuerza_hilo, explicacion, nueva_palabra };
 }
 
+/**
+ * Pide a la IA una palabra nueva hasta que sea válida en tu diccionario.
+ * - 2 intentos extra
+ * - si falla: semilla segura
+ */
+async function generaNuevaPalabraValida({ palabraMaquina, palabraUsuario, historial }) {
+  // 1) respuesta normal
+  let ia = await generaRespuestaIA(palabraMaquina, palabraUsuario, historial);
+  let cand = ia.nueva_palabra;
+
+  if (esValidaEnDiccionario(cand)) return ia;
+
+  // 2) reintentos cortos
+  for (let i = 0; i < 2; i++) {
+    ia = await generaRespuestaIA(palabraMaquina, palabraUsuario, historial);
+    cand = ia.nueva_palabra;
+    if (esValidaEnDiccionario(cand)) return ia;
+  }
+
+  // 3) fallback absoluto
+  ia.nueva_palabra = palabraSemillaAleatoria();
+  return ia;
+}
+
 // -------------------- ENDPOINTS --------------------
 app.get("/ping", (req, res) => res.send("pong"));
 
@@ -255,7 +335,11 @@ app.post("/jugar", async (req, res) => {
       });
     }
 
-    const ia = await generaRespuestaIA(pm, pu, historial);
+    const ia = await generaNuevaPalabraValida({
+      palabraMaquina: pm,
+      palabraUsuario: pu,
+      historial,
+    });
 
     const puntuacion = calculaScoreFinal({
       hay_hilo: ia.hay_hilo,
@@ -268,7 +352,7 @@ app.post("/jugar", async (req, res) => {
     res.json({
       puntuacion,
       explicacion: ia.explicacion,
-      nueva_palabra: ia.nueva_palabra,
+      nueva_palabra: ia.nueva_palabra, // ya validada (o seed fallback)
       hay_hilo: ia.hay_hilo,
     });
   } catch (err) {
@@ -284,4 +368,8 @@ app.post("/jugar", async (req, res) => {
 
 // -------------------- ARRANQUE --------------------
 const PORT = process.env.PORT || 3000;
+
+// Cargamos diccionario antes de escuchar (para que ya esté listo)
+await cargaDiccionario();
+
 app.listen(PORT, () => console.log(`Servidor Sutilia escuchando en el puerto ${PORT}`));
