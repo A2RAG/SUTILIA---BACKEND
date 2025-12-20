@@ -21,13 +21,31 @@ const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Pon aquí el diccionario “igual que Android”
+// Diccionario “igual que Android”
 const DICT_PATH = path.join(__dirname, "diccionario_es.txt");
 
-// Cargamos una vez y cacheamos
+// Cache
 let DICCIONARIO_SET = null;
 
-// Normalización robusta SIN perder la ñ
+// -------------------- UTILIDADES --------------------
+function normaliza(p = "") {
+  return (p || "").toString().trim().toLowerCase();
+}
+
+// Para claves: sin tildes (pero NO borra ñ)
+function sinTildes(str = "") {
+  return (str || "")
+    .toString()
+    .toLowerCase()
+    .replace(/á/g, "a")
+    .replace(/é/g, "e")
+    .replace(/í/g, "i")
+    .replace(/ó/g, "o")
+    .replace(/ú/g, "u")
+    .replace(/ü/g, "u");
+}
+
+// Normalización robusta PARA DICCIONARIO SIN perder la ñ
 function normalizaParaDiccionario(str = "") {
   let s = (str || "").toString().trim().toLowerCase();
   if (!s) return "";
@@ -50,81 +68,26 @@ function normalizaParaDiccionario(str = "") {
   return s;
 }
 
-async function cargaDiccionario() {
-  if (DICCIONARIO_SET) return DICCIONARIO_SET;
-
-  try {
-    const raw = await fs.readFile(DICT_PATH, "utf-8");
-    const set = new Set();
-
-    for (const line of raw.split(/\r?\n/)) {
-      const w = normalizaParaDiccionario(line);
-      if (w) set.add(w);
-    }
-
-    DICCIONARIO_SET = set;
-    console.log(`✅ Diccionario cargado: ${set.size} palabras (${path.basename(DICT_PATH)})`);
-    // -------------------- MAPA PARA RESTAURAR TILDES --------------------
-MAPA_TILDES = new Map();
-
-for (const w of "diccionario_es.txt") {   // 👈 ESTE NOMBRE DEBE SER EL TUYO
-  const key = sinTildes(w);
-  if (!key) continue;
-
-  const prev = MAPA_TILDES.get(key);
-
-  if (!prev) {
-    MAPA_TILDES.set(key, w);
-  } else {
-    const prevTiene = tieneTildesES(prev);
-    const wTiene = tieneTildesES(w);
-    if (!prevTiene && wTiene) {
-      MAPA_TILDES.set(key, w);
-    }
-  }
+// ¿Tiene tildes españolas?
+function tieneTildesES(w = "") {
+  return /[áéíóúü]/i.test(w);
 }
 
-console.log("Mapa de tildes creado:", MAPA_TILDES.size);
-    
-    return set;
-  } catch (e) {
-    console.error(
-      `❌ No pude cargar ${path.basename(DICT_PATH)}. ` +
-      `Crea el archivo junto a index.js con 1 palabra por línea. Error:`,
-      e?.message || e
-    );
-    DICCIONARIO_SET = new Set(); // seguimos con fallback
-    return DICCIONARIO_SET;
-  }
+/**
+ * Limpieza FUERTE de palabra de IA para validar y comparar:
+ * - 1 palabra
+ * - minúscula
+ * - sin diacríticos raros
+ * - solo letras y ñ
+ */
+function limpiaPalabraIA(str = "") {
+  return normalizaParaDiccionario(str) || "bruma";
 }
 
-function esValidaEnDiccionario(palabra) {
-  if (!DICCIONARIO_SET || DICCIONARIO_SET.size === 0) return false;
-  const w = normalizaParaDiccionario(palabra);
-  return w && DICCIONARIO_SET.has(w);
-}
-
-// -------------------- UTILIDADES --------------------
-function normaliza(p = "") {
-  return (p || "").toString().trim().toLowerCase();
-}
-
-// Para lógica interna (comparaciones): sin tildes
-function sinTildes(str = "") {
-  return (str || "")
-    .toString()
-    .toLowerCase()
-    .replace(/á/g, "a")
-    .replace(/é/g, "e")
-    .replace(/í/g, "i")
-    .replace(/ó/g, "o")
-    .replace(/ú/g, "u")
-    .replace(/ü/g, "u");
-}
-// -------------------- DICCIONARIO: MAPA PARA RESTAURAR TILDES --------------------
-// Rellena este Map después de cargar el diccionario (ver paso 2)
-let MAPA_TILDES = new Map();
+// -------------------- TILDES (SALIDA BONITA) --------------------
+// Si tu diccionario NO tiene tildes, esto te lo arregla igualmente:
 const TILDES_OVERRIDE = new Map([
+  ["melodia", "melodía"],
   ["vacio", "vacío"],
   ["circulo", "círculo"],
   ["metafora", "metáfora"],
@@ -227,20 +190,84 @@ const TILDES_OVERRIDE = new Map([
   ["biologia", "biología"],
 ]);
 
-// ¿Tiene tildes españolas?
-function tieneTildesES(w = "") {
-  return /[áéíóúü]/i.test(w);
+// Mapa opcional si el diccionario incluye tildes (si no, quedará casi vacío)
+let MAPA_TILDES = new Map();
+
+/**
+ * Devuelve la palabra “bonita” para pantalla:
+ * 1) override (lo que tú mandas)
+ * 2) mapa del diccionario (si existe)
+ * 3) palabra tal cual
+ */
+function aplicaTildesSalida(palabra = "") {
+  const base = (palabra || "").toString().trim();
+  const key = sinTildes(normaliza(base));
+  if (!key) return base;
+
+  return TILDES_OVERRIDE.get(key) || MAPA_TILDES.get(key) || base;
 }
 
-// Devuelve la versión "bonita" (con tildes) si existe en el diccionario.
-// Si no, devuelve la original.
-function restauraTildesConDiccionario(palabra = "") {
-  const k = sinTildes(normaliza(palabra));
-  if (!k) return palabra;
-  return MAPA_TILDES.get(k) || palabra;
+// -------------------- DICCIONARIO --------------------
+async function cargaDiccionario() {
+  if (DICCIONARIO_SET) return DICCIONARIO_SET;
+
+  try {
+    const raw = await fs.readFile(DICT_PATH, "utf-8");
+
+    const set = new Set();
+    const mapa = new Map(); // construimos aquí y luego lo asignamos
+
+    for (const line of raw.split(/\r?\n/)) {
+      const original = (line || "").trim();
+      if (!original) continue;
+
+      // para validar: normalizamos fuerte (sin tildes)
+      const wNorm = normalizaParaDiccionario(original);
+      if (wNorm) set.add(wNorm);
+
+      // para mostrar: si el original trae tildes, guardamos la versión más “bonita”
+      const key = sinTildes(normaliza(original));
+      if (!key) continue;
+
+      const prev = mapa.get(key);
+      if (!prev) {
+        mapa.set(key, original);
+      } else {
+        // preferimos la que tenga tilde española si hay conflicto
+        const prevTiene = tieneTildesES(prev);
+        const curTiene = tieneTildesES(original);
+        if (!prevTiene && curTiene) {
+          mapa.set(key, original);
+        }
+      }
+    }
+
+    DICCIONARIO_SET = set;
+    MAPA_TILDES = mapa;
+
+    console.log(`✅ Diccionario cargado: ${set.size} palabras (${path.basename(DICT_PATH)})`);
+    console.log(`✅ Mapa de tildes creado: ${MAPA_TILDES.size}`);
+
+    return set;
+  } catch (e) {
+    console.error(
+      `❌ No pude cargar ${path.basename(DICT_PATH)}. ` +
+        `Crea el archivo junto a index.js con 1 palabra por línea. Error:`,
+      e?.message || e
+    );
+    DICCIONARIO_SET = new Set();
+    MAPA_TILDES = new Map();
+    return DICCIONARIO_SET;
+  }
 }
 
-// Similaridad de letras (simple, barata, estable)
+function esValidaEnDiccionario(palabra) {
+  if (!DICCIONARIO_SET || DICCIONARIO_SET.size === 0) return false;
+  const w = normalizaParaDiccionario(palabra);
+  return w && DICCIONARIO_SET.has(w);
+}
+
+// -------------------- SIMILITUD / SCORE --------------------
 function similitudLetras(a, b) {
   const sa = new Set(a.split(""));
   const sb = new Set(b.split(""));
@@ -249,45 +276,13 @@ function similitudLetras(a, b) {
   return inter / union;
 }
 
-/**
- * Limpieza FUERTE de palabra generada por IA:
- * - 1 sola palabra
- * - minúsculas
- * - elimina diacríticos raros
- * - permite solo [a-z] y ñ
- */
-function limpiaPalabraIA(str = "") {
-  // Usamos la misma normalización que para diccionario
-  return normalizaParaDiccionario(str) || "bruma";
-}
-// --- TILDES (VISUAL) ---
-// Tu diccionario puede ir "sin tildes" para lógica interna,
-// pero aquí decidimos cómo se muestran en pantalla.
-
-  
-
-
-function aplicaTildesVisuales(palabra = "") {
-  // Primero limpiamos (1 palabra, minúsculas, sin diacríticos raros)
-  const base = limpiaPalabraIA(palabra);
-  // Luego hacemos clave sin tildes para buscar en el mapa
-  const key = sinTildes(base);
-  // Si existe override, lo devolvemos; si no, devolvemos base
-  return TILDES_OVERRIDE.get(key) || base;
-}
-
-/**
- * Regla de puntuación:
- * - Si NO hay hilo: score máximo 2
- * - Si SÍ hay hilo: score viene de fuerza_hilo 0..10 con endurecimiento
- */
 function calculaScoreFinal({ hay_hilo, fuerza_hilo, palabraMaquina, palabraUsuario }) {
   const a = sinTildes(normaliza(palabraMaquina));
   const b = sinTildes(normaliza(palabraUsuario));
   if (!a || !b) return 0;
   if (a === b) return 1;
 
-  const sim = similitudLetras(a, b); // 0..1
+  const sim = similitudLetras(a, b);
 
   if (!hay_hilo) {
     if (sim > 0.6) return 0;
@@ -332,9 +327,6 @@ function palabraSemillaAleatoria() {
   return PALABRAS_SEMILLA[Math.floor(Math.random() * PALABRAS_SEMILLA.length)];
 }
 
-/**
- * Evita repetir palabras ya usadas (comparación sin tildes)
- */
 function siguientePalabraEvitaRepetir({ propuesta, palabraMaquina, palabraUsuario, historial }) {
   const usados = new Set(
     [palabraMaquina, palabraUsuario, ...(historial || [])]
@@ -356,7 +348,7 @@ function siguientePalabraEvitaRepetir({ propuesta, palabraMaquina, palabraUsuari
   return cand;
 }
 
-// -------------------- PROMPT (VOZ SABIA, FIRME) --------------------
+// -------------------- PROMPT --------------------
 const systemPrompt = `
 Eres SUTILIA: una voz interior sabia, amable y firme.
 No juzgas, no gritas, no complacés. Si no hay hilo, lo dices con claridad y verdad.
@@ -443,26 +435,18 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
   return { hay_hilo, fuerza_hilo, explicacion, nueva_palabra };
 }
 
-/**
- * Pide a la IA una palabra nueva hasta que sea válida en tu diccionario.
- * - 2 intentos extra
- * - si falla: semilla segura
- */
 async function generaNuevaPalabraValida({ palabraMaquina, palabraUsuario, historial }) {
-  // 1) respuesta normal
   let ia = await generaRespuestaIA(palabraMaquina, palabraUsuario, historial);
   let cand = ia.nueva_palabra;
 
   if (esValidaEnDiccionario(cand)) return ia;
 
-  // 2) reintentos cortos
   for (let i = 0; i < 2; i++) {
     ia = await generaRespuestaIA(palabraMaquina, palabraUsuario, historial);
     cand = ia.nueva_palabra;
     if (esValidaEnDiccionario(cand)) return ia;
   }
 
-  // 3) fallback absoluto
   ia.nueva_palabra = palabraSemillaAleatoria();
   return ia;
 }
@@ -471,7 +455,8 @@ async function generaNuevaPalabraValida({ palabraMaquina, palabraUsuario, histor
 app.get("/ping", (req, res) => res.send("pong"));
 
 app.get("/seed", (req, res) => {
-  res.json({ palabra: palabraSemillaAleatoria() });
+  // devolvemos semilla “bonita” (si hay override, sale con tilde)
+  res.json({ palabra: aplicaTildesSalida(palabraSemillaAleatoria()) });
 });
 
 app.post("/jugar", async (req, res) => {
@@ -485,7 +470,7 @@ app.post("/jugar", async (req, res) => {
       return res.status(400).json({
         puntuacion: 0,
         explicacion: "Necesito tu palabra para poder escuchar el hilo.",
-        nueva_palabra: pm,
+        nueva_palabra: aplicaTildesSalida(pm),
         hay_hilo: false,
       });
     }
@@ -507,11 +492,7 @@ app.post("/jugar", async (req, res) => {
     res.json({
       puntuacion,
       explicacion: ia.explicacion,
-      nueva_palabra:
-  TILDES_OVERRIDE.get(sinTildes(ia.nueva_palabra)) ||
-  MAPA_TILDES.get(sinTildes(ia.nueva_palabra)) ||
-  ia.nueva_palabra,
-
+      nueva_palabra: aplicaTildesSalida(ia.nueva_palabra),
       hay_hilo: ia.hay_hilo,
     });
   } catch (err) {
@@ -519,7 +500,7 @@ app.post("/jugar", async (req, res) => {
     res.status(500).json({
       puntuacion: 0,
       explicacion: "Ahora mismo hay ruido en la conexión. Vuelve a intentarlo en unos segundos.",
-      nueva_palabra: "bruma",
+      nueva_palabra: aplicaTildesSalida("bruma"),
       hay_hilo: false,
     });
   }
@@ -527,8 +508,6 @@ app.post("/jugar", async (req, res) => {
 
 // -------------------- ARRANQUE --------------------
 const PORT = process.env.PORT || 3000;
-
-// Cargamos diccionario antes de escuchar (para que ya esté listo)
 await cargaDiccionario();
 
 app.listen(PORT, () => console.log(`Servidor Sutilia escuchando en el puerto ${PORT}`));
