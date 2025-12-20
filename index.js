@@ -21,11 +21,16 @@ const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Diccionario “igual que Android”
-const DICT_PATH = path.join(__dirname, "diccionario_es.txt");
+// Diccionario grande (para validar)
+const DICT_VALIDACION_PATH = path.join(__dirname, "diccionario_es_sin_tildes.txt");
+
+// Diccionario con tildes (solo para mostrar bonito)
+const DICT_TILDES_PATH = path.join(__dirname, "diccionario_es_con_tildes.txt");
 
 // Cache
 let DICCIONARIO_SET = null;
+// Mapa opcional si el diccionario incluye tildes (si no, quedará casi vacío)
+let MAPA_TILDES = new Map();
 
 // -------------------- UTILIDADES --------------------
 function normaliza(p = "") {
@@ -190,8 +195,6 @@ const TILDES_OVERRIDE = new Map([
   ["biologia", "biología"],
 ]);
 
-// Mapa opcional si el diccionario incluye tildes (si no, quedará casi vacío)
-let MAPA_TILDES = new Map();
 
 /**
  * Devuelve la palabra “bonita” para pantalla:
@@ -212,28 +215,31 @@ async function cargaDiccionario() {
   if (DICCIONARIO_SET) return DICCIONARIO_SET;
 
   try {
-    const raw = await fs.readFile(DICT_PATH, "utf-8");
-
+    // 1) Cargar diccionario grande SIN tildes (validación)
+    const rawValid = await fs.readFile(DICT_VALIDACION_PATH, "utf-8");
     const set = new Set();
-    const mapa = new Map(); // construimos aquí y luego lo asignamos
 
-    for (const line of raw.split(/\r?\n/)) {
+    for (const line of rawValid.split(/\r?\n/)) {
+      const w = normalizaParaDiccionario(line);
+      if (w) set.add(w);
+    }
+
+    // 2) Cargar diccionario CON tildes (visual) -> MAPA_TILDES
+    const rawTildes = await fs.readFile(DICT_TILDES_PATH, "utf-8");
+    const mapa = new Map();
+
+    for (const line of rawTildes.split(/\r?\n/)) {
       const original = (line || "").trim();
       if (!original) continue;
 
-      // para validar: normalizamos fuerte (sin tildes)
-      const wNorm = normalizaParaDiccionario(original);
-      if (wNorm) set.add(wNorm);
-
-      // para mostrar: si el original trae tildes, guardamos la versión más “bonita”
-      const key = sinTildes(normaliza(original));
+      const key = sinTildes(normaliza(original)); // clave sin tildes
       if (!key) continue;
 
       const prev = mapa.get(key);
       if (!prev) {
         mapa.set(key, original);
       } else {
-        // preferimos la que tenga tilde española si hay conflicto
+        // Preferimos la versión con tilde si hay conflicto
         const prevTiene = tieneTildesES(prev);
         const curTiene = tieneTildesES(original);
         if (!prevTiene && curTiene) {
@@ -245,21 +251,25 @@ async function cargaDiccionario() {
     DICCIONARIO_SET = set;
     MAPA_TILDES = mapa;
 
-    console.log(`✅ Diccionario cargado: ${set.size} palabras (${path.basename(DICT_PATH)})`);
-    console.log(`✅ Mapa de tildes creado: ${MAPA_TILDES.size}`);
+    console.log(`✅ Diccionario validación: ${set.size} palabras (${path.basename(DICT_VALIDACION_PATH)})`);
+    console.log(`✅ Diccionario tildes: ${MAPA_TILDES.size} entradas (${path.basename(DICT_TILDES_PATH)})`);
 
     return set;
   } catch (e) {
     console.error(
-      `❌ No pude cargar ${path.basename(DICT_PATH)}. ` +
-        `Crea el archivo junto a index.js con 1 palabra por línea. Error:`,
+      "❌ No pude cargar diccionarios. Revisa que estén junto a index.js y con estos nombres:\n" +
+        "- diccionario_es_sin_tildes.txt\n" +
+        "- diccionario_es_con_tildes.txt\n" +
+        "Error:",
       e?.message || e
     );
+
     DICCIONARIO_SET = new Set();
     MAPA_TILDES = new Map();
     return DICCIONARIO_SET;
   }
 }
+
 
 function esValidaEnDiccionario(palabra) {
   if (!DICCIONARIO_SET || DICCIONARIO_SET.size === 0) return false;
@@ -492,7 +502,11 @@ app.post("/jugar", async (req, res) => {
     res.json({
       puntuacion,
       explicacion: ia.explicacion,
-      nueva_palabra: aplicaTildesSalida(ia.nueva_palabra),
+      nueva_palabra:
+  TILDES_OVERRIDE.get(sinTildes(ia.nueva_palabra)) ||
+  MAPA_TILDES.get(sinTildes(ia.nueva_palabra)) ||
+  ia.nueva_palabra,
+
       hay_hilo: ia.hay_hilo,
     });
   } catch (err) {
