@@ -67,7 +67,7 @@ async function cargaDiccionario() {
     // -------------------- MAPA PARA RESTAURAR TILDES --------------------
 MAPA_TILDES = new Map();
 
-for (const w of diccionario_es.txt) {   // 👈 ESTE NOMBRE DEBE SER EL TUYO
+for (const w of "diccionario_es.txt") {   // 👈 ESTE NOMBRE DEBE SER EL TUYO
   const key = sinTildes(w);
   if (!key) continue;
 
@@ -124,53 +124,6 @@ function sinTildes(str = "") {
 // -------------------- DICCIONARIO: MAPA PARA RESTAURAR TILDES --------------------
 // Rellena este Map después de cargar el diccionario (ver paso 2)
 let MAPA_TILDES = new Map();
-const TILDES_OVERRIDE = new Map([
-  ["vacio", "vacío"],
-  ["circulo", "círculo"],
-  ["metafora", "metáfora"],
-  ["raices", "raíces"],
-  ["umbria", "umbría"],
-  ["credito", "crédito"],
-  ["musica", "música"],
-  ["arbol", "árbol"],
-]);
-
-// ¿Tiene tildes españolas?
-function tieneTildesES(w = "") {
-  return /[áéíóúü]/i.test(w);
-}
-
-// Devuelve la versión "bonita" (con tildes) si existe en el diccionario.
-// Si no, devuelve la original.
-function restauraTildesConDiccionario(palabra = "") {
-  const k = sinTildes(normaliza(palabra));
-  if (!k) return palabra;
-  return MAPA_TILDES.get(k) || palabra;
-}
-
-// Similaridad de letras (simple, barata, estable)
-function similitudLetras(a, b) {
-  const sa = new Set(a.split(""));
-  const sb = new Set(b.split(""));
-  const inter = [...sa].filter((ch) => sb.has(ch)).length;
-  const union = new Set([...sa, ...sb]).size || 1;
-  return inter / union;
-}
-
-/**
- * Limpieza FUERTE de palabra generada por IA:
- * - 1 sola palabra
- * - minúsculas
- * - elimina diacríticos raros
- * - permite solo [a-z] y ñ
- */
-function limpiaPalabraIA(str = "") {
-  // Usamos la misma normalización que para diccionario
-  return normalizaParaDiccionario(str) || "bruma";
-}
-// --- TILDES (VISUAL) ---
-// Tu diccionario puede ir "sin tildes" para lógica interna,
-// pero aquí decidimos cómo se muestran en pantalla.
 const TILDES_OVERRIDE = new Map([
   ["vacio", "vacío"],
   ["circulo", "círculo"],
@@ -273,6 +226,46 @@ const TILDES_OVERRIDE = new Map([
   ["psicologia", "psicología"],
   ["biologia", "biología"],
 ]);
+
+// ¿Tiene tildes españolas?
+function tieneTildesES(w = "") {
+  return /[áéíóúü]/i.test(w);
+}
+
+// Devuelve la versión "bonita" (con tildes) si existe en el diccionario.
+// Si no, devuelve la original.
+function restauraTildesConDiccionario(palabra = "") {
+  const k = sinTildes(normaliza(palabra));
+  if (!k) return palabra;
+  return MAPA_TILDES.get(k) || palabra;
+}
+
+// Similaridad de letras (simple, barata, estable)
+function similitudLetras(a, b) {
+  const sa = new Set(a.split(""));
+  const sb = new Set(b.split(""));
+  const inter = [...sa].filter((ch) => sb.has(ch)).length;
+  const union = new Set([...sa, ...sb]).size || 1;
+  return inter / union;
+}
+
+/**
+ * Limpieza FUERTE de palabra generada por IA:
+ * - 1 sola palabra
+ * - minúsculas
+ * - elimina diacríticos raros
+ * - permite solo [a-z] y ñ
+ */
+function limpiaPalabraIA(str = "") {
+  // Usamos la misma normalización que para diccionario
+  return normalizaParaDiccionario(str) || "bruma";
+}
+// --- TILDES (VISUAL) ---
+// Tu diccionario puede ir "sin tildes" para lógica interna,
+// pero aquí decidimos cómo se muestran en pantalla.
+
+  
+
 
 function aplicaTildesVisuales(palabra = "") {
   // Primero limpiamos (1 palabra, minúsculas, sin diacríticos raros)
