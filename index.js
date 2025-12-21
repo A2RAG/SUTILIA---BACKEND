@@ -293,6 +293,12 @@ function calculaScoreFinal({ hay_hilo, fuerza_hilo, palabraMaquina, palabraUsuar
   if (a === b) return 1;
 
   const sim = similitudLetras(a, b);
+  // Penalización fuerte por sinonimia o cercanía excesiva
+if (sim > 0.65) {
+  // aunque la IA diga que hay hilo, lo limitamos
+  return Math.min(4, Math.round(Number(fuerza_hilo ?? 3)));
+}
+
 
   if (!hay_hilo) {
     if (sim > 0.6) return 0;
