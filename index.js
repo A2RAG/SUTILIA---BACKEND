@@ -49,6 +49,61 @@ function sinTildes(str = "") {
     .replace(/ú/g, "u")
     .replace(/ü/g, "u");
 }
+// -------------------- FAMILIAS (ANTI-REPETICIÓN) --------------------
+// Heurística simple (pero efectiva) para “familia” de palabra.
+// No es lingüística perfecta, pero evita repeticiones tipo: eco/ecos, cantar/cantando, etc.
+function familiaKey(p = "") {
+  let w = sinTildes(normaliza(p)).trim();
+  if (!w) return "";
+
+  // 1) solo letras (y ñ por si acaso)
+  w = w.replace(/[^a-zñ]/g, "");
+
+  // 2) plurales rápidos
+  if (w.endsWith("es") && w.length > 4) w = w.slice(0, -2);
+  else if (w.endsWith("s") && w.length > 3) w = w.slice(0, -1);
+
+  // 3) sufijos muy comunes (muy conservador)
+  const sufijos = [
+    "mente", "ciones", "cion", "siones", "sion",
+    "amientos", "amiento", "imientos", "imiento",
+    "adoras", "ador", "adora", "adores",
+    "ancias", "ancia", "encias", "encia",
+    "idades", "idad",
+    "itos", "itas", "ito", "ita",
+    "illos", "illas", "illo", "illa",
+    "ando", "iendo", "ados", "adas", "ado", "ada",
+    "ar", "er", "ir"
+  ];
+
+  for (const suf of sufijos) {
+    if (w.endsWith(suf) && w.length - suf.length >= 4) {
+      w = w.slice(0, -suf.length);
+      break;
+    }
+  }
+
+  // 4) clave estable (recorte para no ser demasiado estrictos)
+  if (w.length > 6) w = w.slice(0, 6);
+
+  return w;
+}
+
+function familiasUsadas({ palabraMaquina, palabraUsuario, historial }) {
+  const usados = new Set();
+
+  const mete = (x) => {
+    const k = familiaKey(x);
+    if (k) usados.add(k);
+  };
+
+  mete(palabraMaquina);
+  mete(palabraUsuario);
+
+  for (const h of (historial || [])) mete(h);
+
+  return usados;
+}
 
 // Normalización robusta PARA DICCIONARIO SIN perder la ñ
 function normalizaParaDiccionario(str = "") {
@@ -467,20 +522,38 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
 }
 
 async function generaNuevaPalabraValida({ palabraMaquina, palabraUsuario, historial }) {
-  let ia = await generaRespuestaIA(palabraMaquina, palabraUsuario, historial);
-  let cand = ia.nueva_palabra;
+  const usadosFamilia = familiasUsadas({ palabraMaquina, palabraUsuario, historial });
 
-  if (esValidaEnDiccionario(cand)) return ia;
+  // Reintenta “hasta conseguirlo” (con red de seguridad para no quemar tokens/coste)
+  const MAX_INTENTOS = 25;
 
-  for (let i = 0; i < 2; i++) {
-    ia = await generaRespuestaIA(palabraMaquina, palabraUsuario, historial);
-    cand = ia.nueva_palabra;
-    if (esValidaEnDiccionario(cand)) return ia;
+  for (let intento = 1; intento <= MAX_INTENTOS; intento++) {
+    const ia = await generaRespuestaIA(palabraMaquina, palabraUsuario, historial);
+
+    // 1) candidata limpia + válida en diccionario
+    const cand = limpiaPalabraIA(ia.nueva_palabra);
+    if (!esValidaEnDiccionario(cand)) continue;
+
+    // 2) familia (anti-repetición)
+    const fam = familiaKey(cand);
+    if (!fam) continue;
+    if (usadosFamilia.has(fam)) continue;
+
+    // OK: devolvemos IA pero con palabra ya “limpia”
+    ia.nueva_palabra = cand;
+    return ia;
   }
 
+  // Si la IA se atasca muchísimo: fallback seguro (raro)
+  const ia = await generaRespuestaIA(palabraMaquina, palabraUsuario, historial);
   ia.nueva_palabra = palabraSemillaAleatoria();
+  ia.hay_hilo = false;
+  ia.fuerza_hilo = 2;
+  ia.explicacion =
+    "He evitado repetir familias para que el hilo tenga variedad. Prueba otra palabra y seguimos.";
   return ia;
 }
+
 
 // -------------------- ENDPOINTS --------------------
 app.get("/ping", (req, res) => res.send("pong"));
