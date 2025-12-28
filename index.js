@@ -524,7 +524,6 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
 async function generaNuevaPalabraValida({ palabraMaquina, palabraUsuario, historial }) {
   const usadosFamilia = familiasUsadas({ palabraMaquina, palabraUsuario, historial });
 
-  // Reintenta “hasta conseguirlo” (con red de seguridad para no quemar tokens/coste)
   const MAX_INTENTOS = 25;
 
   for (let intento = 1; intento <= MAX_INTENTOS; intento++) {
@@ -543,6 +542,38 @@ async function generaNuevaPalabraValida({ palabraMaquina, palabraUsuario, histor
     ia.nueva_palabra = cand;
     return ia;
   }
+
+  // Fallback si no consigue una palabra nueva válida
+  return {
+    nueva_palabra: palabraSemillaAleatoria(),
+    explicacion: "Hoy el hilo está tímido. Probemos una nueva semilla.",
+    hay_hilo: false,
+    fuerza_hilo: 0.35
+  };
+}
+
+async function generaHistoria(prompt) {
+  // Usa EXACTAMENTE la misma puerta de entrada que ya uses para hablar con tu IA.
+  // En tu código, eso es generaRespuestaIA(...). Aquí hacemos una llamada equivalente
+  // pero orientada a texto largo.
+
+  // Si tienes una función directa a tu modelo (ej: callOpenAI / askLLM), ponla aquí.
+  // Si NO, reutilizamos tu función existente si acepta prompt largo:
+  if (typeof generaTextoIA === "function") {
+    return await generaTextoIA(prompt);
+  }
+
+  // Fallback: intenta usar la misma infraestructura que generaRespuestaIA
+  if (typeof generaRespuestaIA === "function") {
+    // Truco: pasamos inputs “dummy” y metemos el prompt dentro del historial para forzar contexto.
+    const dummy = await generaRespuestaIA("bruma", "latido", [prompt]);
+    // Si tu IA devuelve un campo de texto largo, ajústalo aquí.
+    return (dummy && (dummy.historia || dummy.texto || dummy.explicacion)) || "";
+  }
+
+  return "No pude conectar con la voz de la historia todavía.";
+}
+
 
   // Si la IA se atasca muchísimo: fallback seguro (raro)
   const ia = await generaRespuestaIA(palabraMaquina, palabraUsuario, historial);
@@ -644,7 +675,7 @@ Devuelve SOLO el texto del cuento, sin títulos, sin listas, sin comillas.
 
     // ⬇️ AQUÍ llama a tu modelo (OpenAI / etc.)
     // Te dejo un ejemplo genérico: reemplaza `callLLM(prompt)` por tu función real.
-    const historia = await callLLM(prompt);
+    const historia = await generaHistoria(prompt);
 
     res.json({
       historia: String(historia || "").trim(),
