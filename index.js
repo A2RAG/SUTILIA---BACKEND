@@ -614,6 +614,51 @@ app.post("/jugar", async (req, res) => {
   }
 });
 
+app.post("/historia", async (req, res) => {
+  try {
+    const { historial } = req.body;
+
+    // historial esperado: [{ palabraMaquina, palabraUsuario, explicacion, puntuacion, jugadorNombre }, ...]
+    const turnos = Array.isArray(historial) ? historial.slice(0, 40) : [];
+
+    const palabrasHilo = [];
+    for (const t of turnos) {
+      if (t?.palabraMaquina) palabrasHilo.push(String(t.palabraMaquina));
+      if (t?.palabraUsuario) palabrasHilo.push(String(t.palabraUsuario));
+    }
+
+    // texto base para IA
+    const prompt = `
+Eres un escritor de relatos breves con tono consciente, humano y elegante.
+Tu misión: escribir una historia de 20 a 30 líneas que deje un "click" interior (moraleja sutil).
+Debe ser universal: usa "él/ella" o fórmulas neutras, sin asumir género fijo.
+Integra las palabras del hilo (puedes flexionarlas si hace falta) y añade palabras extra para que todo tenga sentido.
+Si el hilo no tiene sentido, inventa una historia coherente igualmente, encajando las palabras como símbolos.
+Estilo: poético, claro, no empalagoso, con cierre potente.
+
+PALABRAS DEL HILO:
+${palabrasHilo.join(", ")}
+
+Devuelve SOLO el texto del cuento, sin títulos, sin listas, sin comillas.
+`.trim();
+
+    // ⬇️ AQUÍ llama a tu modelo (OpenAI / etc.)
+    // Te dejo un ejemplo genérico: reemplaza `callLLM(prompt)` por tu función real.
+    const historia = await callLLM(prompt);
+
+    res.json({
+      historia: String(historia || "").trim(),
+      palabrasHilo
+    });
+  } catch (e) {
+    res.status(500).json({
+      historia:
+        "Hoy la historia no quiso escribirse a la primera. Respira, vuelve a intentarlo, y el hilo hablará.",
+      palabrasHilo: []
+    });
+  }
+});
+
 // -------------------- ARRANQUE --------------------
 const PORT = process.env.PORT || 3000;
 await cargaDiccionario();
