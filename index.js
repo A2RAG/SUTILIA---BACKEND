@@ -653,7 +653,7 @@ app.post("/historia", async (req, res) => {
     }
 
     const prompt = `
-Escribe una historia de 30 a 40 líneas (no párrafos gigantes), con tono consciente y elegante.
+Escribe una historia de 20 a 30 líneas (no párrafos gigantes), con tono consciente y elegante.
 Debe dejar un “click” interior (moraleja sutil), sin sermonear.
 Usa formulación universal (neutro o él/ella sin fijar género).
 Integra estas palabras como símbolos (puedes flexionarlas si hace falta) y añade las que necesites para que el cuento tenga sentido.
