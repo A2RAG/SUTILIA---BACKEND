@@ -553,37 +553,32 @@ async function generaNuevaPalabraValida({ palabraMaquina, palabraUsuario, histor
 }
 
 async function generaHistoria(prompt) {
-  // Usa EXACTAMENTE la misma puerta de entrada que ya uses para hablar con tu IA.
-  // En tu código, eso es generaRespuestaIA(...). Aquí hacemos una llamada equivalente
-  // pero orientada a texto largo.
+  const response = await openai.responses.create({
+    model: MODEL,
+    input: [
+      {
+        role: "system",
+        content: [
+          {
+            type: "input_text",
+            text:
+              "Eres un escritor de relatos breves con tono consciente, humano y elegante. " +
+              "Escribes historias claras, poéticas y con cierre potente, sin clichés ni azúcar. " +
+              "No devuelves listas ni títulos. Devuelves SOLO el texto final del cuento.",
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "input_text", text: prompt }],
+      },
+    ],
+    max_output_tokens: 900,
+  });
 
-  // Si tienes una función directa a tu modelo (ej: callOpenAI / askLLM), ponla aquí.
-  // Si NO, reutilizamos tu función existente si acepta prompt largo:
-  if (typeof generaTextoIA === "function") {
-    return await generaTextoIA(prompt);
-  }
-
-  // Fallback: intenta usar la misma infraestructura que generaRespuestaIA
-  if (typeof generaRespuestaIA === "function") {
-    // Truco: pasamos inputs “dummy” y metemos el prompt dentro del historial para forzar contexto.
-    const dummy = await generaRespuestaIA("bruma", "latido", [prompt]);
-    // Si tu IA devuelve un campo de texto largo, ajústalo aquí.
-    return (dummy && (dummy.historia || dummy.texto || dummy.explicacion)) || "";
-  }
-
-  return "No pude conectar con la voz de la historia todavía.";
+  return (response.output_text || "").trim();
 }
 
-
-  // Si la IA se atasca muchísimo: fallback seguro (raro)
-  const ia = await generaRespuestaIA(palabraMaquina, palabraUsuario, historial);
-  ia.nueva_palabra = palabraSemillaAleatoria();
-  ia.hay_hilo = false;
-  ia.fuerza_hilo = 2;
-  ia.explicacion =
-    "He evitado repetir familias para que el hilo tenga variedad. Prueba otra palabra y seguimos.";
-  return ia;
-}
 
 
 // -------------------- ENDPOINTS --------------------
@@ -647,9 +642,8 @@ app.post("/jugar", async (req, res) => {
 
 app.post("/historia", async (req, res) => {
   try {
-    const { historial } = req.body;
+    const { historial } = req.body || {};
 
-    // historial esperado: [{ palabraMaquina, palabraUsuario, explicacion, puntuacion, jugadorNombre }, ...]
     const turnos = Array.isArray(historial) ? historial.slice(0, 40) : [];
 
     const palabrasHilo = [];
@@ -658,37 +652,37 @@ app.post("/historia", async (req, res) => {
       if (t?.palabraUsuario) palabrasHilo.push(String(t.palabraUsuario));
     }
 
-    // texto base para IA
     const prompt = `
-Eres un escritor de relatos breves con tono consciente, humano y elegante.
-Tu misión: escribir una historia de 20 a 30 líneas que deje un "click" interior (moraleja sutil).
-Debe ser universal: usa "él/ella" o fórmulas neutras, sin asumir género fijo.
-Integra las palabras del hilo (puedes flexionarlas si hace falta) y añade palabras extra para que todo tenga sentido.
-Si el hilo no tiene sentido, inventa una historia coherente igualmente, encajando las palabras como símbolos.
-Estilo: poético, claro, no empalagoso, con cierre potente.
+Escribe una historia de 30 a 40 líneas (no párrafos gigantes), con tono consciente y elegante.
+Debe dejar un “click” interior (moraleja sutil), sin sermonear.
+Usa formulación universal (neutro o él/ella sin fijar género).
+Integra estas palabras como símbolos (puedes flexionarlas si hace falta) y añade las que necesites para que el cuento tenga sentido.
+Si el hilo no tiene sentido, inventa igualmente una historia coherente y encaja las palabras con naturalidad.
+Cierra con una frase final potente y limpia.
 
 PALABRAS DEL HILO:
 ${palabrasHilo.join(", ")}
 
-Devuelve SOLO el texto del cuento, sin títulos, sin listas, sin comillas.
+Devuelve SOLO el cuento. Sin título. Sin listas. Sin comillas.
 `.trim();
 
-    // ⬇️ AQUÍ llama a tu modelo (OpenAI / etc.)
-    // Te dejo un ejemplo genérico: reemplaza `callLLM(prompt)` por tu función real.
     const historia = await generaHistoria(prompt);
 
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.json({
       historia: String(historia || "").trim(),
-      palabrasHilo
+      palabrasHilo,
     });
   } catch (e) {
+    console.error("Error en /historia:", e?.message || e);
     res.status(500).json({
       historia:
-        "Hoy la historia no quiso escribirse a la primera. Respira, vuelve a intentarlo, y el hilo hablará.",
-      palabrasHilo: []
+        "Hoy la historia no quiso escribirse a la primera. Respira… e intenta de nuevo.",
+      palabrasHilo: [],
     });
   }
 });
+
 
 // -------------------- ARRANQUE --------------------
 const PORT = process.env.PORT || 3000;
