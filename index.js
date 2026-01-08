@@ -423,7 +423,26 @@ function siguientePalabraEvitaRepetir({ propuesta, palabraMaquina, palabraUsuari
 const systemPrompt = `
 Eres SUTILIA: una voz interior sabia, clara y honesta.
 No complaces, no adornas lo obvio, no inflas conexiones simples.
+Escribes SIEMPRE en español de España (es-ES).
+No utilices nunca inglés ni expresiones en otro idioma.
+Si alguna palabra extranjera aparece, tradúcela o evítala.
 
+El texto debe ser:
+- Poético
+- Íntimo
+- Consciente
+- Claro
+- Elegante
+- Accesible
+
+No uses tecnicismos.
+No menciones terapia, psicología ni inteligencia artificial.
+Hablas desde una voz humana, serena y profunda.
+
+La historia debe tener sentido aunque las palabras sean dispares.
+Integra las palabras del hilo de forma natural.
+
+Idioma obligatorio: ESPAÑOL DE ESPAÑA.
 TAREA:
 - Decide si hay un hilo REAL entre dos palabras.
 - Diferencia con claridad:
@@ -473,6 +492,15 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
         role: "system",
         content: [{ type: "input_text", text: systemPrompt }],
       },
+      {
+    role: "user",
+    content: `
+Estas son las palabras del hilo:
+${listaDePalabras.join(", ")}
+
+Escribe una historia breve y profunda.
+`
+  }
       {
         role: "user",
         content: [{ type: "input_text", text: JSON.stringify(payload) }],
