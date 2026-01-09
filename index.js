@@ -493,15 +493,6 @@ async function generaRespuestaIA(palabraMaquina, palabraUsuario, historial = [])
         content: [{ type: "input_text", text: systemPrompt }],
       },
       {
-    role: "user",
-    content: `
-Estas son las palabras del hilo:
-${listaDePalabras.join(", ")}
-
-Escribe una historia breve y profunda.
-`
-  }
-      {
         role: "user",
         content: [{ type: "input_text", text: JSON.stringify(payload) }],
       },
@@ -549,6 +540,7 @@ Escribe una historia breve y profunda.
   return { hay_hilo, fuerza_hilo, explicacion, nueva_palabra };
 }
 
+
 async function generaNuevaPalabraValida({ palabraMaquina, palabraUsuario, historial }) {
   const usadosFamilia = familiasUsadas({ palabraMaquina, palabraUsuario, historial });
 
@@ -587,6 +579,9 @@ async function generaHistoria(prompt) {
       {
         role: "system",
         content: [
+          { role: "system", content: [{ type: "input_text", text: systemPromptHistoria }] },
+          { role: "user", content: [{ type: "input_text", text: promptUsuario }] },
+          
           {
             type: "input_text",
             text:
