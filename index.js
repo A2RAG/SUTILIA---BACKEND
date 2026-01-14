@@ -573,23 +573,19 @@ async function generaNuevaPalabraValida({ palabraMaquina, palabraUsuario, histor
 }
 
 async function generaHistoria(prompt) {
+  const systemPromptHistoria =
+    "Eres un escritor de relatos breves con tono consciente, humano y elegante. " +
+    "Escribes un texto breve y humano que recoja el hilo emocional entre palabras. " +
+    "No juzgas, no explicas, no das consejos. No usas listas ni títulos. " +
+    "Mantienes un tono íntimo, sereno y elegante. " +
+    "Devuelves SOLO el texto final, como una historia corta con cierre suave y verdadero.";
+
   const response = await openai.responses.create({
     model: MODEL,
     input: [
       {
         role: "system",
-        content: [
-          { role: "system", content: [{ type: "input_text", text: systemPromptHistoria }] },
-          { role: "user", content: [{ type: "input_text", text: promptUsuario }] },
-          
-          {
-            type: "input_text",
-            text:
-              "Eres un escritor de relatos breves con tono consciente, humano y elegante. " +
-              "Escribes historias claras, poéticas y con cierre potente, sin clichés ni azúcar. " +
-              "No devuelves listas ni títulos. Devuelves SOLO el texto final del cuento.",
-          },
-        ],
+        content: [{ type: "input_text", text: systemPromptHistoria }],
       },
       {
         role: "user",
@@ -601,6 +597,7 @@ async function generaHistoria(prompt) {
 
   return (response.output_text || "").trim();
 }
+
 
 
 
