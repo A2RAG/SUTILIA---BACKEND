@@ -663,7 +663,6 @@ app.post("/jugar", async (req, res) => {
 app.post("/historia", async (req, res) => {
   try {
     const { historial } = req.body || {};
-
     const turnos = Array.isArray(historial) ? historial.slice(0, 40) : [];
 
     const palabrasHilo = [];
@@ -689,19 +688,23 @@ Devuelve SOLO el cuento. Sin título. Sin listas. Sin comillas.
     const historia = await generaHistoria(prompt);
 
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.json({
+    return res.json({
       historia: String(historia || "").trim(),
       palabrasHilo,
     });
   } catch (e) {
     console.error("Error en /historia:", e?.message || e);
-    res.status(500).json({
-      historia:
-        "Hoy la historia no quiso escribirse a la primera. Respira… e intenta de nuevo.",
+
+    // ✅ No devolvemos “historia de mentira”
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    return res.status(200).json({
+      historia: "",
       palabrasHilo: [],
+      error: "historia_unavailable",
     });
   }
 });
+
 
 
 // -------------------- ARRANQUE --------------------
